@@ -1,0 +1,50 @@
+server:
+    host: 0.0.0.0
+    port: 8088
+    read_timeout: 30
+    write_timeout: 30
+    base_domain: localhost
+database:
+    driver: sqlite
+    dsn: gateway.db
+jwt:
+    secret: gatewayhub-change-me-in-production
+    expires: 24h
+    remember_days: 7
+health_check:
+    interval: 30
+    timeout: 2
+    fail_threshold: 3
+    recover_threshold: 2
+    health_endpoint: /health
+    slow_threshold: 1000
+stats:
+    retain_days: 180
+    batch_size: 100
+    batch_interval: 1
+    sample_rate: 1
+geo:
+    enabled: true
+    db_path: data/ip2region.xdb
+    online_fallback: ""
+log:
+    level: info
+    output: stdout
+    file_path: ""
+security:
+    enabled: true
+    rate_limit: 100
+    burst: 200
+    ban_threshold: 5
+    ban_duration: 300
+    waf_enabled: true
+    waf_body_max: 524288
+    global_rps: 0
+    trust_proxies: true
+backup:
+    enabled: true
+    dir: backups
+    interval: 24h
+    retain: 30
+setup:
+    allow_remote: false

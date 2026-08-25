@@ -1,0 +1,23 @@
+# 依赖
+node_modules/
+web/node_modules/
+
+# 构建产物
+web/dist/
+gatewayhub
+gatewayhub.exe
+*.exe
+
+# 数据库
+gateway.db
+*.db
+
+# 工作区数据（本地记忆等，勿提交）
+.workbuddy/
+
+# 运行时数据（离线 IP 库，首次运行需自行下载 ip2region.xdb）
+data/*.xdb
+
+# 系统
+.DS_Store
+*.log
