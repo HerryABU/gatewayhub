@@ -7,6 +7,8 @@ web/dist/
 gatewayhub
 gatewayhub.exe
 *.exe
+release/
+release.old/
 
 # 数据库
 gateway.db

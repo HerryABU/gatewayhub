@@ -63,17 +63,32 @@
 
 ### 直接运行（推荐）
 
-```bash
-# 1. 编译（前端已内嵌进二进制）
-go build -o gatewayhub .
+```powershell
+# 1. 一键编译（前端 + 全平台二进制，产物在 release/）
+powershell -ExecutionPolicy Bypass -File build-all.ps1
 
-# 2. 运行
-./gatewayhub -config=config.yaml
+# 2. 或仅编译当前平台
+powershell -ExecutionPolicy Bypass -File build-all.ps1 -Platforms windows
+
+# 3. 手动编译单个
+go build -o gatewayhub .
 ```
+
+```powershell
+# 一键构建脚本参数
+.\build-all.ps1                      # 前端 + 全平台（win/linux/mac × 10 目标）
+.\build-all.ps1 -Platforms windows    # 仅 Windows（amd64/arm64）
+.\build-all.ps1 -SkipFrontend         # 跳过前端构建（复用现有 web/dist）
+```
+
+> 脚本自动：检测 go/npm/IP 库 → `npm run build` → 交叉编译（CGO_ENABLED=0，
+> 内嵌前端与 IP 库）→ 可选 UPX 压缩 → 汇总。旧产物自动备份为 `release.old/`。
+> 说明：数据库驱动 glebarez/sqlite（modernc 纯 Go 移植）不支持
+> windows/386、windows/arm、linux/mips64，已从目标列表排除。
 
 浏览器打开 `http://localhost:8088`，首次运行会进入**建站向导**，按步骤配置站点名、管理员账号、数据库即可。
 
-> 重新体验建站向导：删除 `gateway.db` 后重启即可。
+> 重新体验建站向导：删除 `data/gateway.db` 后重启即可。
 
 #### 两种访问方式
 
