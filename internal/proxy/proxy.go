@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -16,6 +17,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 
+	"gatewayhub/internal/accesslog"
 	"gatewayhub/internal/models"
 	"gatewayhub/internal/stats"
 	"gatewayhub/internal/target"
@@ -47,7 +49,8 @@ type Entry struct {
 type Manager struct {
 	db         *gorm.DB
 	stats      *stats.Writer
-	baseDomain string // 子域名后缀（如 localhost），空则禁用子域名路由
+	fileLog    *accesslog.FileLogger // 访问日志落盘（含请求头），可为 nil
+	baseDomain string               // 子域名后缀（如 localhost），空则禁用子域名路由
 	mu         sync.RWMutex
 	m          map[string]*Entry
 	multi      []string // 含 "/" 的多级前缀，按长度降序（最长前缀匹配用）
@@ -56,6 +59,11 @@ type Manager struct {
 // NewManager 创建代理管理器
 func NewManager(db *gorm.DB, stats *stats.Writer, baseDomain string) *Manager {
 	return &Manager{db: db, stats: stats, baseDomain: baseDomain, m: make(map[string]*Entry)}
+}
+
+// SetFileLogger 注入访问日志落盘器（含请求头，按天/小时）
+func (m *Manager) SetFileLogger(l *accesslog.FileLogger) {
+	m.fileLog = l
 }
 
 // Load 从数据库加载全部路由到内存
@@ -277,7 +285,7 @@ func (m *Manager) Handle(c *gin.Context) {
 	m.serve(c, entry, entry.Proxy, prefix, path, clientIP)
 }
 
-// serve 执行转发并异步记录统计
+// serve 执行转发并异步记录统计与访问日志（含请求头）
 func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, prefix, path, clientIP string) {
 	start := time.Now()
 	sw := &statusWriter{ResponseWriter: c.Writer, status: http.StatusOK}
@@ -302,6 +310,26 @@ func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, 
 		UserAgent:    req.UserAgent(),
 		ResponseTime: int(elapsed),
 	})
+
+	// 访问日志落盘（含完整请求头，按天/小时分文件）
+	if m.fileLog != nil {
+		headers := make(map[string]string, len(req.Header))
+		for k, vs := range req.Header {
+			headers[k] = strings.Join(vs, ", ")
+		}
+		if err := m.fileLog.Log(accesslog.Entry{
+			Method:      req.Method,
+			Path:        path,
+			Status:      sw.status,
+			LatencyMs:   elapsed,
+			ClientIP:    clientIP,
+			UserAgent:   req.UserAgent(),
+			RoutePrefix: prefix,
+			Headers:     headers,
+		}); err != nil {
+			log.Printf("[accesslog] write failed: %v", err)
+		}
+	}
 }
 
 // matchSubdomain 从 Host 头提取单段子域名前缀，如 "java-order.localhost[:8088]" → "java-order"。

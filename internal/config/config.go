@@ -55,6 +55,11 @@ type LogConfig struct {
 	FilePath string `yaml:"file_path"`
 }
 
+type AccessLogConfig struct {
+	Enabled bool   `yaml:"enabled"` // 是否落盘访问日志（含请求头）
+	Dir     string `yaml:"dir"`     // 日志根目录，按 天/小时 组织：{dir}/YYYY-MM-DD/HH.log
+}
+
 type SecurityConfig struct {
 	Enabled       bool    `yaml:"enabled"`
 	RateLimit     int     `yaml:"rate_limit"`      // 每 IP 每秒最大请求数
@@ -79,16 +84,17 @@ type SetupConfig struct {
 }
 
 type Config struct {
-	Server      ServerConfig   `yaml:"server"`
-	Database    DatabaseConfig `yaml:"database"`
-	JWT         JWTConfig      `yaml:"jwt"`
-	HealthCheck HealthConfig   `yaml:"health_check"`
-	Stats       StatsConfig    `yaml:"stats"`
-	Geo         GeoConfig      `yaml:"geo"`
-	Log         LogConfig      `yaml:"log"`
-	Security    SecurityConfig `yaml:"security"`
-	Backup      BackupConfig   `yaml:"backup"`
-	Setup       SetupConfig    `yaml:"setup"`
+	Server      ServerConfig    `yaml:"server"`
+	Database    DatabaseConfig  `yaml:"database"`
+	JWT         JWTConfig       `yaml:"jwt"`
+	HealthCheck HealthConfig    `yaml:"health_check"`
+	Stats       StatsConfig     `yaml:"stats"`
+	Geo         GeoConfig       `yaml:"geo"`
+	Log         LogConfig       `yaml:"log"`
+	AccessLog   AccessLogConfig `yaml:"access_log"`
+	Security    SecurityConfig  `yaml:"security"`
+	Backup      BackupConfig    `yaml:"backup"`
+	Setup       SetupConfig     `yaml:"setup"`
 }
 
 func Default() *Config {
@@ -100,7 +106,7 @@ func Default() *Config {
 			WriteTimeout: 30,
 			BaseDomain:   "localhost",
 		},
-		Database: DatabaseConfig{Driver: "sqlite", DSN: "gateway.db"},
+		Database: DatabaseConfig{Driver: "sqlite", DSN: "data/gateway.db"},
 		JWT: JWTConfig{
 			Secret:       "gatewayhub-change-me-in-production",
 			Expires:      "24h",
@@ -125,6 +131,10 @@ func Default() *Config {
 			DBPath:  "data/ip2region.xdb",
 		},
 		Log: LogConfig{Level: "info", Output: "stdout"},
+		AccessLog: AccessLogConfig{
+			Enabled: true,
+			Dir:     "logs",
+		},
 		Security: SecurityConfig{
 			Enabled:      true,
 			RateLimit:    100,

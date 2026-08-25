@@ -3,6 +3,8 @@ package database
 import (
 	"fmt"
 	"math/rand"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/glebarez/sqlite"
@@ -16,6 +18,14 @@ import (
 
 // Init 初始化数据库连接并执行自动迁移
 func Init(cfg *config.DatabaseConfig) (*gorm.DB, error) {
+	// SQLite 数据库放独立目录（如 data/），自动创建目录避免启动失败
+	if (cfg.Driver == "sqlite" || cfg.Driver == "") && cfg.DSN != "" && cfg.DSN != ":memory:" {
+		if dir := filepath.Dir(cfg.DSN); dir != "." && dir != "" {
+			if err := os.MkdirAll(dir, 0o755); err != nil {
+				return nil, fmt.Errorf("create db dir: %w", err)
+			}
+		}
+	}
 	var dialector gorm.Dialector
 	switch cfg.Driver {
 	case "sqlite", "":

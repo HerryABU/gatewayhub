@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"gatewayhub/internal/accesslog"
 	"gatewayhub/internal/backup"
 	"gatewayhub/internal/config"
 	"gatewayhub/internal/database"
@@ -28,6 +29,9 @@ import (
 //go:embed all:web/dist
 var distFS embed.FS
 
+//go:embed data/ip2region.xdb
+var ip2regionXDB []byte
+
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	flag.Parse()
@@ -42,6 +46,15 @@ func main() {
 		log.Fatalf("初始化数据库失败: %v", err)
 	}
 
+	// 离线 IP 库已嵌入二进制：目标路径缺失时自动解包（已存在则尊重用户自定义的库）
+	if cfg.Geo.Enabled && cfg.Geo.DBPath != "" {
+		unpacked, err := geo.EnsureDB(cfg.Geo.DBPath, ip2regionXDB)
+		if err != nil {
+			log.Printf("IP 库解包失败（可忽略）: %v", err)
+		} else if unpacked {
+			log.Printf("已从内置资源解包 IP 库到 %s", cfg.Geo.DBPath)
+		}
+	}
 	// 地理位置解析器
 	geoResolver := geo.New(cfg.Geo)
 	if geoResolver.Loaded() {
@@ -57,6 +70,13 @@ func main() {
 
 	// 反向代理管理器（内存路由表）
 	proxyMgr := proxy.NewManager(db, writer, cfg.Server.BaseDomain)
+	// 访问日志落盘（含请求头，按 天/小时 组织），失败不阻塞转发
+	var fileLogger *accesslog.FileLogger
+	if cfg.AccessLog.Enabled && cfg.AccessLog.Dir != "" {
+		fileLogger = accesslog.New(cfg.AccessLog.Dir)
+		proxyMgr.SetFileLogger(fileLogger)
+		log.Printf("访问日志已启用：%s/YYYY-MM-DD/HH.log", cfg.AccessLog.Dir)
+	}
 	if err := proxyMgr.Load(); err != nil {
 		log.Fatalf("加载路由失败: %v", err)
 	}
@@ -127,5 +147,8 @@ func main() {
 	writer.Stop()
 	checker.Stop()
 	backupMgr.Stop()
+	if fileLogger != nil {
+		_ = fileLogger.Close()
+	}
 	log.Println("已退出")
 }

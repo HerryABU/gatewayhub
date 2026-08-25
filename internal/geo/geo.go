@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +52,24 @@ func New(cfg config.GeoConfig) *Resolver {
 		}
 	}
 	return r
+}
+
+// EnsureDB 确保离线 IP 库文件存在：目标路径缺失时，把内嵌的 ip2region.xdb 解包写盘。
+// 已存在（含用户自定义更新的库）则原样保留；返回解包是否发生。
+func EnsureDB(dbPath string, embedded []byte) (unpacked bool, err error) {
+	if dbPath == "" || len(embedded) == 0 {
+		return false, nil
+	}
+	if fi, err := os.Stat(dbPath); err == nil && fi.Size() > 0 {
+		return false, nil // 已存在，尊重用户自己的库
+	}
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		return false, fmt.Errorf("ensure db dir: %w", err)
+	}
+	if err := os.WriteFile(dbPath, embedded, 0o644); err != nil {
+		return false, fmt.Errorf("unpack ip2region.xdb: %w", err)
+	}
+	return true, nil
 }
 
 func (r *Resolver) loadDB(path string) error {

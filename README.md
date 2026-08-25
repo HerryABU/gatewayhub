@@ -121,8 +121,19 @@ cd web && npm install && npm run dev     # 监听 :5173，代理 /api 到 :8088
 | 项 | 值 |
 | :--- | :--- |
 | 监听端口 | `8088`（`config.yaml` 可改） |
-| 数据库 | SQLite（默认 `gateway.db`，可迁移到 MySQL） |
+| 数据库 | SQLite（默认 `data/gateway.db`，可迁移到 MySQL） |
 | 默认管理员 | 建站向导中自定义（示例默认 `admin / admin123`） |
+
+### 数据与日志目录（单文件分发）
+
+- **IP 库已嵌入二进制**：`ip2region.xdb`（11MB）编译进 `gatewayhub.exe`，运行时若 `data/ip2region.xdb` 缺失会自动解包；已存在（如用户自定义更新）则原样保留。
+- **数据库**：默认 `data/gateway.db`，目录不存在时自动创建。
+- **访问日志（含完整请求头）**：默认 `logs/`，按 天/小时 组织，每行一条 JSON：
+  ```
+  logs/2026-08-25/17.log
+  ```
+  含 `time / method / path / status / latency_ms / client_ip / user_agent / route_prefix / headers`（完整请求头）。可用 `access_log.enabled` / `access_log.dir` 关闭或改目录。
+- 地图 GeoJSON（中国/世界）已随前端产物内嵌进二进制。
 
 ---
 

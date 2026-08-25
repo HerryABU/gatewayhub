@@ -15,8 +15,11 @@ gateway.db
 # 工作区数据（本地记忆等，勿提交）
 .workbuddy/
 
-# 运行时数据（离线 IP 库，首次运行需自行下载 ip2region.xdb）
+# 运行时数据（ip2region.xdb 已嵌入二进制，入库保证可复现构建；
+# 用户数据库 data/gateway.db 与访问日志 logs/ 不入库）
 data/*.xdb
+!data/ip2region.xdb
+logs/
 
 # 系统
 .DS_Store

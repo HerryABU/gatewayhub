@@ -6,7 +6,7 @@ server:
     base_domain: localhost
 database:
     driver: sqlite
-    dsn: gateway.db
+    dsn: data/gateway.db
 jwt:
     secret: gatewayhub-change-me-in-production
     expires: 24h
@@ -27,6 +27,9 @@ geo:
     enabled: true
     db_path: data/ip2region.xdb
     online_fallback: ""
+access_log:
+    enabled: true
+    dir: logs
 log:
     level: info
     output: stdout
