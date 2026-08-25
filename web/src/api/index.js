@@ -1,7 +1,9 @@
 import axios from 'axios'
 import { clearAuth } from '../store'
+import { joinBase } from '../base'
 
-const api = axios.create({ baseURL: '/api', timeout: 15000 })
+// baseURL 使用动态部署根：无前缀部署为 /api，子路径 /{name}/ 部署为 /{name}/api
+const api = axios.create({ baseURL: joinBase('api'), timeout: 15000 })
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('gw_token')
@@ -14,7 +16,7 @@ api.interceptors.response.use(
   (err) => {
     if (err.response && err.response.status === 401) {
       clearAuth()
-      if (window.location.pathname !== '/') window.location.href = '/'
+      if (window.location.pathname !== joinBase('')) window.location.assign(joinBase(''))
     }
     return Promise.reject(err)
   }

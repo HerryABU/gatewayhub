@@ -1,5 +1,6 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import { isAuthed } from '../store'
+import { basePath } from '../base'
 import api from '../api'
 import Home from '../views/Home.vue'
 import Dashboard from '../views/Dashboard.vue'
@@ -12,7 +13,8 @@ const routes = [
 ]
 
 const router = createRouter({
-  history: createWebHistory(),
+  // base 使用动态部署根：无前缀部署为 /，子路径 /{name}/ 部署下前端路由挂在 /{name}/ 之后
+  history: createWebHistory(basePath),
   routes
 })
 

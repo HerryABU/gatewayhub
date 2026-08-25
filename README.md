@@ -82,6 +82,28 @@ go build -o gatewayhub .
 
 > 子域名默认基于 `localhost`（现代浏览器会直接把 `*.localhost` 解析到 `127.0.0.1`，无需改 hosts）。可经 `server.base_domain` 换成自己的域名。
 
+### 子路径部署（自建反向代理 `/{name}/` → 网关）
+
+网关自身可挂在任意反向代理子路径下，前缀由反代决定、**严禁硬编码**（`{name}` 仅为示例）：
+
+- **前端**：构建产物全部使用相对路径（`base: './'`），运行时通过 `import.meta.url` 动态推导部署根，API 请求、前端路由、业务链接自动带上当前前缀；无前缀部署时自动退化为 `/`。
+- **后端**：请求进入时「智能剥离」首段部署前缀——仅当首段既非业务路由（含多级前缀首段）、亦非保留字（`api/assets/static/favicon`）且路径含第二段时才剥离，因此网关 UI、API、静态资源以及**嵌套的业务路由**（`/{name}/java-order/...`）在任意帽子下都能工作。
+
+```nginx
+# nginx 示例：https://example.com/gw/ → http://127.0.0.1:8088/（剥离前缀）
+location /gw/ {
+    proxy_pass http://127.0.0.1:8088/;          # 末尾 / 表示剥离 /gw 前缀
+    proxy_set_header Host $host;
+    proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    proxy_set_header X-Forwarded-Proto $scheme;
+    proxy_http_version 1.1;
+    proxy_set_header Upgrade $http_upgrade;     # WebSocket
+    proxy_set_header Connection "upgrade";
+}
+```
+
+也可配置**透传前缀**（`proxy_pass http://127.0.0.1:8088;` 不带末尾 `/`），网关会自动识别并剥离首段部署前缀。
+
 ### 开发模式
 
 ```bash

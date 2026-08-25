@@ -49,7 +49,7 @@
           <template #label><span>📊 {{ t('nav.stats') }}</span></template>
           <StatsPanel />
         </el-tab-pane>
-        <el-tab-pane :name="'geo'">
+        <el-tab-pane :name="'geo'" lazy>
           <template #label><span>🌍 {{ t('nav.geo') }}</span></template>
           <VisitorGeo />
         </el-tab-pane>

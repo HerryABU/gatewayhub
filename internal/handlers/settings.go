@@ -40,19 +40,21 @@ func (h *Handler) SiteName() string {
 // GetSettings GET /api/settings（公开只读站点信息）
 func (h *Handler) GetSettings(c *gin.Context) {
 	h.ok(c, gin.H{
-		"site_name":    h.getSetting("site_name"),
-		"language":     h.getSetting("language"),
-		"configured":   h.IsConfigured(),
-		"db_driver":    h.Cfg.Database.Driver,
-		"version":      "1.1.0",
+		"site_name":  h.getSetting("site_name"),
+		"site_intro": h.getSetting("site_intro"),
+		"language":   h.getSetting("language"),
+		"configured": h.IsConfigured(),
+		"db_driver":  h.Cfg.Database.Driver,
+		"version":    "1.1.0",
 	})
 }
 
 // UpdateSettings PUT /api/settings（管理员）
 func (h *Handler) UpdateSettings(c *gin.Context) {
 	var req struct {
-		SiteName string `json:"site_name"`
-		Language string `json:"language"`
+		SiteName  string  `json:"site_name"`
+		SiteIntro *string `json:"site_intro"`
+		Language  string  `json:"language"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -60,6 +62,10 @@ func (h *Handler) UpdateSettings(c *gin.Context) {
 	}
 	if req.SiteName != "" {
 		_ = h.setSetting("site_name", req.SiteName)
+	}
+	// 站点介绍支持多行文本；用指针区分「未传」与「传空串清空」
+	if req.SiteIntro != nil {
+		_ = h.setSetting("site_intro", *req.SiteIntro)
 	}
 	if req.Language != "" {
 		_ = h.setSetting("language", req.Language)

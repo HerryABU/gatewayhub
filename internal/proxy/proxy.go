@@ -198,6 +198,22 @@ func (m *Manager) Exists(prefix string) bool {
 	return ok
 }
 
+// HasPathPrefix 判断某「首段」是否为已注册业务路由（含多级前缀的首段，如 v2/beta 的 v2）。
+// 供子路径部署前缀剥离逻辑使用：首段命中业务路由时不得剥离。
+func (m *Manager) HasPathPrefix(first string) bool {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if _, ok := m.m[first]; ok {
+		return true
+	}
+	for _, p := range m.multi {
+		if strings.HasPrefix(p, first+"/") {
+			return true
+		}
+	}
+	return false
+}
+
 // Count 返回路由数量
 func (m *Manager) Count() int {
 	m.mu.RLock()

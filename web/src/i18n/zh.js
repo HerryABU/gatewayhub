@@ -50,7 +50,9 @@ export default {
     openServices: '已开放服务',
     noOpenServices: '暂无对外开放的服务',
     visit: '访问',
-    enterConsole: '进入控制台'
+    enterConsole: '进入控制台',
+    heroDefault: '统一接入网关：将分散的 Web 服务聚合到一个入口，健康巡检、访问统计、安全防护一站式管理。',
+    viewServices: '查看开放服务'
   },
   login: {
     title: '管理员登录',
@@ -194,6 +196,8 @@ export default {
   settings: {
     title: '站点设置',
     siteName: '站点名称',
+    siteIntro: '站点介绍',
+    siteIntroHint: '展示在访客首页横幅的简介，说明这个门户是做什么的',
     language: '语言',
     save: '保存'
   },

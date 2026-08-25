@@ -61,7 +61,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, onUnmounted, watch } from 'vue'
+import { ref, onMounted, onUnmounted, watch, nextTick } from 'vue'
 import { useI18n } from 'vue-i18n'
 import * as echarts from 'echarts'
 import api from '../api'
@@ -73,6 +73,8 @@ const view = ref('china')
 const data = ref({ total: 0, china_total: 0, overseas_total: 0, provinces: [], cities: [], overseas: [], days: 7 })
 const mapRef = ref()
 let chart = null
+let resizeObs = null
+let pending = null
 
 function fmt(n) {
   return Number(n || 0).toLocaleString('zh-CN')
@@ -152,14 +154,33 @@ function worldOption() {
   }
 }
 
-function render() {
-  if (!mapRef.value) return
+// 确保容器可见且有尺寸后再初始化/渲染：
+// 若处于隐藏 tab（display:none）中 echarts.init 会拿到 0 尺寸导致地图不显示，
+// 这里通过尺寸检测 + ResizeObserver 在容器变为可见后自动补渲染。
+function ensureRender() {
+  const el = mapRef.value
+  if (!el) return
+  if (el.clientWidth === 0 || el.clientHeight === 0) {
+    pending = setTimeout(ensureRender, 120)
+    return
+  }
+  clearTimeout(pending)
+  pending = null
   if (!chart) {
-    chart = echarts.init(mapRef.value)
+    chart = echarts.init(el)
     echarts.registerMap('china', chinaGeo)
     echarts.registerMap('world', worldGeo)
   }
   chart.setOption(view.value === 'china' ? chinaOption() : worldOption(), true)
+  chart.resize()
+}
+
+function render() {
+  if (pending) {
+    clearTimeout(pending)
+    pending = null
+  }
+  ensureRender()
 }
 
 watch(view, () => render())
@@ -168,13 +189,26 @@ function onResize() {
   chart && chart.resize()
 }
 
-onMounted(() => {
-  load().then(() => render())
+onMounted(async () => {
+  await load()
+  await nextTick()
+  render()
+  // 监听容器尺寸变化（切 tab 显示/隐藏、窗口缩放），可见后自动重渲染
+  resizeObs = new ResizeObserver(() => {
+    const el = mapRef.value
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+      chart ? chart.resize() : render()
+    }
+  })
+  if (mapRef.value) resizeObs.observe(mapRef.value)
   window.addEventListener('resize', onResize)
 })
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
+  resizeObs && resizeObs.disconnect()
+  if (pending) clearTimeout(pending)
   chart && chart.dispose()
+  chart = null
 })
 </script>
 

@@ -14,8 +14,9 @@ import (
 	"gatewayhub/internal/handlers"
 )
 
-// Setup 构建 Gin 引擎：安全中间件 + 建站向导守卫 + API + 静态/SPA + 反向代理兜底
-func Setup(h *handlers.Handler, dist fs.FS) *gin.Engine {
+// Setup 构建 http.Handler：外层先做「子路径部署前缀」剥离（在 Gin 路由匹配之前），
+// 内部为 Gin 引擎：安全中间件 + 建站向导守卫 + API + 静态/SPA + 反向代理兜底。
+func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 	r := gin.New()
 	// 用极轻量 requestLogger 替代 gin.Logger()：gin.Logger 会同步向终端逐条输出，
 	// 在 Windows 控制台下 I/O 极慢，是本地联调的主要拖慢点。默认(debug 以下)不打印逐请求日志。
@@ -109,7 +110,15 @@ func Setup(h *handlers.Handler, dist fs.FS) *gin.Engine {
 		serveSPA(c, dist, fileServer)
 	})
 
-	return r
+	// 外层包装：在 Gin 路由匹配之前智能剥离「子路径部署前缀」（详见 stripDeployPrefix）
+	var engine http.Handler = r
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if p := stripDeployPrefix(req.URL.Path, h); p != req.URL.Path {
+			req.URL.Path = p
+			req.URL.RawPath = ""
+		}
+		engine.ServeHTTP(w, req)
+	})
 }
 
 // serveSPA 提供静态资源或 SPA 回退；多段未知路径返回 404
@@ -128,6 +137,42 @@ func serveSPA(c *gin.Context, dist fs.FS, fileServer http.Handler) {
 	}
 	c.Request.URL.Path = "/"
 	fileServer.ServeHTTP(c.Writer, c.Request)
+}
+
+// reservedFirstSegments 与业务路由命名保留字一致：首段为这些值时绝不当作部署前缀剥离
+var reservedFirstSegments = map[string]bool{
+	"api": true, "assets": true, "static": true, "favicon": true,
+}
+
+// firstSeg 切分路径首段与其后部分（rest 恒以 / 开头，无第二段时 rest 为空）
+func firstSeg(p string) (string, string) {
+	t := strings.TrimPrefix(p, "/")
+	if t == "" {
+		return "", ""
+	}
+	if i := strings.Index(t, "/"); i >= 0 {
+		return t[:i], "/" + t[i+1:]
+	}
+	return t, ""
+}
+
+// stripDeployPrefix 智能剥离「子路径部署前缀」，兼容自建反向代理 /{name}/ → 网关。
+//
+// 两种典型拓扑都能工作（严禁硬编码 {name}，前缀由反代决定）：
+//  1. 反代剥离前缀（常见）：网关收到干净路径 /api、/assets、/login…… 首段为保留字或
+//     无第二段，一律不剥离，行为与无前缀部署完全一致。
+//  2. 反代透传前缀：网关收到 /{name}/api、/{name}/assets、/{name}/login……
+//     仅当首段「既非业务路由（含多级前缀首段）、亦非保留字、且路径含第二段」时，
+//     将该段判定为部署前缀并剥离，其余原样放行。
+//
+// 嵌套的业务路由同样受益：/{name}/java-order/login → /java-order/login → 命中业务路由。
+// 必须在 Gin 路由匹配之前执行（Gin 的中间件在路由匹配之后才运行，改路径不会重新路由）。
+func stripDeployPrefix(p string, h *handlers.Handler) string {
+	seg, rest := firstSeg(p)
+	if seg != "" && rest != "" && !reservedFirstSegments[seg] && !h.Proxy.HasPathPrefix(seg) {
+		return rest
+	}
+	return p
 }
 
 // securityMiddleware 安全防护中间件（建站向导路径豁免）

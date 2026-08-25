@@ -50,7 +50,9 @@ export default {
     openServices: 'Open Services',
     noOpenServices: 'No open services',
     visit: 'Visit',
-    enterConsole: 'Open Console'
+    enterConsole: 'Open Console',
+    heroDefault: 'Unified access gateway: aggregate scattered web services into one entry with health checks, traffic analytics and security protection.',
+    viewServices: 'View services'
   },
   login: {
     title: 'Administrator Login',
@@ -194,6 +196,8 @@ export default {
   settings: {
     title: 'Site Settings',
     siteName: 'Site Name',
+    siteIntro: 'Site Intro',
+    siteIntroHint: 'Shown in the homepage hero banner — what this portal does',
     language: 'Language',
     save: 'Save'
   },
