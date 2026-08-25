@@ -1,4 +1,4 @@
-<#
+﻿<#
   GatewayHub 一键式自动化编译
   ===========================
   自动完成：前端构建(Vite) -> 交叉编译全部平台二进制(内嵌前端+IP库) -> UPX 压缩(可选) -> 汇总
@@ -14,8 +14,7 @@
 #>
 param(
     [string[]]$Platforms = @("windows", "linux", "darwin"),
-    [switch]$SkipFrontend,
-    [string]$Version = "1.1.0"
+    [switch]$SkipFrontend
 )
 
 $ErrorActionPreference = "Continue"
@@ -30,7 +29,7 @@ function Write-OK($msg)   { Write-Host "  [OK] $msg" -ForegroundColor Green }
 function Write-Fail($msg) { Write-Host "  [FAIL] $msg" -ForegroundColor Red }
 
 # ---------------- 0. 前置检查 ----------------
-Write-Step "GatewayHub 一键构建 (v$Version) - 前置检查"
+Write-Step "GatewayHub 一键构建 - 前置检查"
 
 $goCmd = Get-Command go -ErrorAction SilentlyContinue
 if (-not $goCmd) { Write-Fail "未找到 go，请安装 Go 1.21+ 并加入 PATH"; exit 1 }
@@ -93,6 +92,10 @@ $targets = @(
 
 # 过滤平台
 $targets = @($targets | Where-Object { $_.OS -in $Platforms })
+if ($targets.Count -eq 0) {
+    Write-Fail "平台参数无效: $($Platforms -join ',')（可选: windows / linux / darwin）"
+    exit 1
+}
 Write-Step "3/3 交叉编译 ($($targets.Count) 个目标)"
 
 # UPX 压缩器（可选，存在则启用；参考 nvs 布局）
