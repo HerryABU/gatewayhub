@@ -169,7 +169,7 @@ gatewayhub/
 ├── build-all.ps1           # 一键自动化编译脚本（前端+全平台）
 ├── internal/
 │   ├── config/             # 配置加载
-│   ├── database/           # 数据库初始化 + 演示数据
+│   ├── database/           # 数据库初始化 + 示例路由（无演示日志）
 │   ├── models/             # 数据模型
 │   ├── auth/               # bcrypt + JWT
 │   ├── proxy/              # 反向代理引擎（热加载）
