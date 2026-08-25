@@ -173,14 +173,13 @@ func (c *Checker) checkRoute(r models.Route) (bool, int64) {
 	ctx, cancel := context.WithTimeout(context.Background(), c.timeout)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, healthURL, nil)
 	if err == nil {
-		resp, err := c.client.Do(req)
-		cancel()
-		latency := time.Since(start).Milliseconds()
-		if err == nil {
+		if resp, err := c.client.Do(req); err == nil {
+			cancel()
 			resp.Body.Close()
-			return true, latency
+			return true, time.Since(start).Milliseconds()
 		}
 	}
+	cancel()
 	// TCP 兜底探测
 	start = time.Now()
 	conn, err := net.DialTimeout("tcp", p.Host, c.timeout)

@@ -108,7 +108,7 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		return
 	}
 	if _, err := target.Parse(req.Target); err != nil {
-		h.fail(c, 1001, "后端地址格式错误，支持 :8080、:8080/api/v1 或完整 URL")
+		h.fail(c, 1001, "后端地址格式错误，支持 :8080、:8080/api/v1、完整 URL 或含 ${ENV} 环境变量；"+err.Error())
 		return
 	}
 	timeout := req.Timeout
@@ -182,7 +182,7 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 		return
 	}
 	if _, err := target.Parse(req.Target); err != nil {
-		h.fail(c, 1001, "后端地址格式错误")
+		h.fail(c, 1001, "后端地址格式错误，支持 :8080、:8080/api/v1、完整 URL 或含 ${ENV} 环境变量；"+err.Error())
 		return
 	}
 	timeout := req.Timeout

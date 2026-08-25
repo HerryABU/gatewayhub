@@ -28,12 +28,60 @@ func TestRewritePath(t *testing.T) {
 		// 子路径后端
 		{"app", "/api/v1", "/api/v1/user", "/app/user"},
 		{"app", "/api/v1", "/api/v1", "/app"},
-		{"app", "/api/v1", "/other", "/other"}, // 非根路径不动
+		{"app", "/api/v1", "/other", "/app/other"},         // 非 root 的根路径同样加前缀（避免 404）
+		{"app", "/api/v1", "/assets/x.js", "/app/assets/x.js"}, // 站点根资源也加前缀（修复 bug）
 	}
 	for _, c := range cases {
 		rw := newRewriter(c.prefix, c.root, "")
 		if got := rw.rewritePath(c.in); got != c.want {
 			t.Errorf("rewritePath(%q,%q,%q) = %q, want %q", c.prefix, c.root, c.in, got, c.want)
+		}
+	}
+}
+
+func TestRewriteRelative(t *testing.T) {
+	cases := []struct {
+		prefix string
+		root   string
+		in     string
+		want   string
+	}{
+		{"app", "", "/assets/index.js", "./assets/index.js"},
+		{"app", "", "/api/login", "./api/login"},
+		{"app", "", "/", "./"},
+		{"app", "", "//cdn.x.com/a.js", "//cdn.x.com/a.js"},
+		{"app", "", "https://x.com/a.js", "https://x.com/a.js"},
+		{"app", "", "relative.js", "relative.js"},
+		{"app", "", "/app/api/x", "/app/api/x"}, // 已带前缀不重复
+		// 子路径后端：/{root}/x → ./x
+		{"app", "/api/v1", "/api/v1/user", "./user"},
+		{"app", "/api/v1", "/api/v1", "./"},
+		{"app", "/api/v1", "/assets/x.js", "./assets/x.js"}, // 站点根资源相对化（修复 root 下 404）
+	}
+	for _, c := range cases {
+		rw := newRewriter(c.prefix, c.root, "")
+		if got := rw.rewriteRelative(c.in); got != c.want {
+			t.Errorf("rewriteRelative(%q,%q,%q) = %q, want %q", c.prefix, c.root, c.in, got, c.want)
+		}
+	}
+}
+
+func TestRelativeToFile(t *testing.T) {
+	cases := []struct {
+		cssPath string
+		raw     string
+		want    string
+	}{
+		{"/app/assets/index.css", "/fonts/x.woff", "../fonts/x.woff"},
+		{"/app/assets/index.css", "/assets/x.js", "./x.js"},
+		{"/app/css/main.css", "/img/logo.png", "../img/logo.png"},
+		{"/app/style.css", "/logo.png", "./logo.png"},
+		{"/app/a/b/c.css", "/api/x", "../../api/x"},
+	}
+	for _, c := range cases {
+		rw := newRewriter("app", "", "")
+		if got := rw.relativeToFile(c.raw, c.cssPath); got != c.want {
+			t.Errorf("relativeToFile(%q, %q) = %q, want %q", c.raw, c.cssPath, got, c.want)
 		}
 	}
 }
@@ -53,41 +101,55 @@ func TestRewriteHTML(t *testing.T) {
 </body></html>`
 	out := string(rw.rewriteHTML([]byte(in)))
 	checks := []string{
-		`href="/app/assets/style.css"`,
-		`src="/app/assets/main.js"`,
-		`src="/app/logo.png"`,
-		`srcset="/app/a.png 1x, /app/b.png 2x"`,
-		`url('/app/bg.png')`,
-		`url(/app/bg2.png)`,
-		`href="/app/login"`,
-		`fetch('/app/api/inline')`, // 内联 <script> 中的 API 路径
-		`const base='/app/api'`,    // 内联 <script> 中的 baseURL
+		`<base href="/app/">`,       // 注入 base
+		`href="./assets/style.css"`, // 绝对改相对
+		`src="./assets/main.js"`,
+		`src="./logo.png"`,
+		`srcset="./a.png 1x, ./b.png 2x"`,
+		`url('./bg.png')`,
+		`url(./bg2.png)`,
+		`href="./login"`,
+		`fetch('./api/inline')`, // 内联 <script> 中的 API 路径相对化
+		`const base='./api'`,    // 内联 <script> 中的 baseURL
 	}
 	for _, c := range checks {
 		if !contains(out, c) {
 			t.Errorf("rewriteHTML 未包含 %q\n输出:\n%s", c, out)
 		}
 	}
-	// 绝对 URL 不应被改写
-	if contains(out, `href="/app/https://`) || contains(out, `src="/app/`) && !contains(out, `src="/app/assets`) {
-		// 仅检查关键点，避免误报
+	// 不应残留未改写的根绝对路径（HTML 属性层面）
+	for _, bad := range []string{`href="/assets/style.css"`, `src="/assets/main.js"`, `src="/logo.png"`} {
+		if contains(out, bad) {
+			t.Errorf("rewriteHTML 残留根绝对路径 %q\n输出:\n%s", bad, out)
+		}
 	}
 }
 
 func TestRewriteCSS(t *testing.T) {
 	rw := newRewriter("app", "", "")
 	out := string(rw.rewriteCSS([]byte(`body{background:url(/bg.png)} .a{background-image:url("/x/y.png")} @import "/theme.css"; @import url("/other.css");`)))
-	if !contains(out, `url(/app/bg.png)`) {
-		t.Errorf("CSS 未改写根路径: %s", out)
+	if !contains(out, `url(./bg.png)`) {
+		t.Errorf("CSS 未相对化: %s", out)
 	}
-	if !contains(out, `url("/app/x/y.png")`) {
-		t.Errorf("CSS 未改写引号内路径: %s", out)
+	if !contains(out, `url("./x/y.png")`) {
+		t.Errorf("CSS 未相对化引号内路径: %s", out)
 	}
-	if !contains(out, `@import "/app/theme.css"`) {
-		t.Errorf("CSS 未改写 @import 引号路径: %s", out)
+	if !contains(out, `@import "./theme.css"`) {
+		t.Errorf("CSS 未相对化 @import 引号路径: %s", out)
 	}
-	if !contains(out, `url("/app/other.css")`) {
-		t.Errorf("CSS 未改写 @import url() 路径: %s", out)
+	if !contains(out, `url("./other.css")`) {
+		t.Errorf("CSS 未相对化 @import url() 路径: %s", out)
+	}
+}
+
+func TestRewriteCSSFile(t *testing.T) {
+	rw := newRewriter("app", "", "")
+	out := string(rw.rewriteCSSFile([]byte(`body{background:url(/bg.png)} @import "/theme.css";`), "/app/assets/index.css"))
+	if !contains(out, `url(../bg.png)`) {
+		t.Errorf("外链 CSS 未相对文件位置: %s", out)
+	}
+	if !contains(out, `@import "../theme.css"`) {
+		t.Errorf("外链 CSS @import 未相对文件位置: %s", out)
 	}
 }
 
@@ -131,15 +193,15 @@ func TestRewriteJS(t *testing.T) {
 	in := `fetch("/api/site-info");axios.get('/api/categories');import("/assets/chunk.js");const base="/api";api.get('/setup/env-check');api.get("/auth/me");const x="/";window.location.href='/login';location.assign("/register");`
 	out := string(rw.rewriteJS([]byte(in)))
 	checks := []string{
-		`"/app/api/site-info"`,        // fetch 完整 API 路径改写
-		`'/app/api/categories'`,       // axios 完整 API 路径改写
-		`"/app/assets/chunk.js"`,      // 动态 import 改写
-		`const base="/app/api"`,       // baseURL 改写
+		`"./api/site-info"`,           // fetch API 路径相对化（document base）
+		`'./api/categories'`,          // axios API 路径相对化
+		`"/app/assets/chunk.js"`,      // 动态 import 资源保留前缀绝对（module 基准）
+		`const base="./api"`,          // baseURL 相对化
 		`api.get('/setup/env-check')`, // 相对端点不改写（避免双重前缀）
 		`api.get("/auth/me")`,         // 相对端点不改写
 		`const x="/"`,                 // 单个 / 不重写
-		`location.href='/app/login'`,  // 整页导航改写
-		`location.assign("/app/register")`, // assign 改写
+		`location.href='/app/login'`,  // 整页导航保留前缀绝对
+		`location.assign("/app/register")`, // assign 保留前缀绝对
 	}
 	for _, c := range checks {
 		if !contains(out, c) {
@@ -280,10 +342,10 @@ func TestInjectBase(t *testing.T) {
 		t.Errorf("未改写 <base>:\n%s", out2)
 	}
 
-	// 带子路径后端：不注入
+	// 带子路径后端：同样注入（相对路径统一依赖 base）
 	rw2 := newRewriter("app", "/api/v1", "")
-	if out3 := rw2.injectBase(in); contains(out3, "<base") {
-		t.Errorf("带子路径后端不应注入 <base>:\n%s", out3)
+	if out3 := rw2.injectBase(in); !contains(out3, `<base href="/app/">`) {
+		t.Errorf("带子路径后端也应注入 <base>:\n%s", out3)
 	}
 }
 
@@ -301,7 +363,7 @@ func gzipBytes(t *testing.T, b []byte) []byte {
 func TestModify(t *testing.T) {
 	body := []byte(`<html><head><script src="/main.js"></script></head></html>`)
 
-	// 1) 非 gzip HTML
+	// 1) 非 gzip HTML：绝对改相对 + 注入 base
 	resp := &http.Response{
 		Header: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
 		Body:   io.NopCloser(bytes.NewReader(body)),
@@ -311,8 +373,11 @@ func TestModify(t *testing.T) {
 		t.Fatal(err)
 	}
 	out, _ := io.ReadAll(resp.Body)
-	if !contains(string(out), `src="/app/main.js"`) {
-		t.Errorf("普通 HTML 未重写: %s", out)
+	if !contains(string(out), `src="./main.js"`) {
+		t.Errorf("普通 HTML 未相对化: %s", out)
+	}
+	if !contains(string(out), `<base href="/app/">`) {
+		t.Errorf("普通 HTML 未注入 base: %s", out)
 	}
 	if resp.Header.Get("Content-Encoding") != "" {
 		t.Errorf("非 gzip 响应不应有 Content-Encoding")
@@ -334,14 +399,14 @@ func TestModify(t *testing.T) {
 		t.Fatalf("重压后无法解压: %v", err)
 	}
 	decoded, _ := io.ReadAll(gr)
-	if !contains(string(decoded), `src="/app/main.js"`) {
-		t.Errorf("gzip HTML 未重写: %s", decoded)
+	if !contains(string(decoded), `src="./main.js"`) {
+		t.Errorf("gzip HTML 未相对化: %s", decoded)
 	}
 	if resp2.Header.Get("Content-Encoding") != "gzip" {
 		t.Errorf("gzip 响应应保留 Content-Encoding")
 	}
 
-	// 3) Location 重写（根相对 + 指向后端自身的绝对地址）
+	// 3) Location 重写（根相对 + 指向后端自身的绝对地址）→ 保留前缀绝对
 	resp3 := &http.Response{
 		Header: http.Header{
 			"Location":     []string{"/login"},
@@ -362,4 +427,24 @@ func TestModify(t *testing.T) {
 	if got := resp4.Header.Get("Location"); got != "/app/foo" {
 		t.Errorf("Location 绝对(后端自身)未重写: %s", got)
 	}
+
+	// 4) 外链 CSS 按「CSS 文件位置」相对化（网关侧路径经 context 透传）
+	cssBody := []byte(`body{background:url(/bg.png)}`)
+	resp5 := &http.Response{
+		Header: http.Header{"Content-Type": []string{"text/css"}},
+		Body:   io.NopCloser(bytes.NewReader(cssBody)),
+		Request: mustReqWithGWPath("/app/assets/index.css"),
+	}
+	if err := rw.modify(resp5); err != nil {
+		t.Fatal(err)
+	}
+	cssOut, _ := io.ReadAll(resp5.Body)
+	if !contains(string(cssOut), `url(../bg.png)`) {
+		t.Errorf("外链 CSS 未按文件位置相对化: %s", cssOut)
+	}
+}
+
+func mustReqWithGWPath(p string) *http.Request {
+	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:8080/"+p, nil)
+	return withGWPath(req, p)
 }

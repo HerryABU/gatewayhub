@@ -101,6 +101,8 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 	rw := newRewriter(r.Prefix, p.Root, p.Host)
 	entry.Proxy = &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
+			// 记录网关侧原始路径（外链 CSS 相对化需要推算基准目录）
+			req = withGWPath(req, req.URL.Path)
 			rest := sanitizeRest(req.URL.Path, r.Prefix)
 			applyForwardHeaders(req, p)
 			req.URL.Path = target.JoinPath(p.Root, rest)
