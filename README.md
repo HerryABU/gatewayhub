@@ -2,7 +2,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.2.0**
 
 ---
 
@@ -31,6 +31,14 @@
 - **访问者地理位置**：ip2region 离线库解析 IP → 国家/省/市
 - **中国地图**（省级热力图）+ **世界地图**（国家级热力图），一键切换
 - 地图边界符合国家测绘标准（含台湾、南海诸岛）
+- **访问日志落盘（含完整请求头）**：按 天/小时 组织 `logs/YYYY-MM-DD/HH.log`，每行一条 JSON
+
+### 管理控制台（现代化侧边导航）
+- **访客页**：Hero 高级感横幅 + 开放服务竖排列行（UptimeBar 条条 + hover 浮动发光）+ 站点介绍
+- **控制台**：现代侧边导航布局，8 大功能模块（路由/健康/统计/地图/安全/迁移/备份/合规）
+- **站点介绍**：站点级简介（访客页横幅）+ **各挂载站介绍**（路由 description，访客页逐站展示）
+- **管理员改密码**：用户菜单一键修改（原密码校验 + 长度/一致性校验）
+- 中英文双语，主题浅色/深色一键切换
 
 ### 安全防护（DDoS / CC / WAF）
 - **DDoS/CC 限流**：每 IP 令牌桶限流 + 连续超限自动封禁
@@ -156,8 +164,9 @@ cd web && npm install && npm run dev     # 监听 :5173，代理 /api 到 :8088
 
 ```
 gatewayhub/
-├── main.go                 # 入口：加载配置、初始化组件、启动服务
+├── main.go                 # 入口：加载配置、初始化组件、启动服务（内嵌前端+IP库）
 ├── config.yaml             # 配置文件
+├── build-all.ps1           # 一键自动化编译脚本（前端+全平台）
 ├── internal/
 │   ├── config/             # 配置加载
 │   ├── database/           # 数据库初始化 + 演示数据
@@ -165,8 +174,9 @@ gatewayhub/
 │   ├── auth/               # bcrypt + JWT
 │   ├── proxy/              # 反向代理引擎（热加载）
 │   ├── health/             # 健康检查（绿/橙/红）
-│   ├── stats/              # 异步日志写入
-│   ├── geo/                # ip2region 地理位置解析
+│   ├── stats/              # 异步日志写入（数据库统计）
+│   ├── accesslog/          # 访问日志落盘（含请求头，按天/小时）
+│   ├── geo/                # ip2region 地理位置解析（内嵌+自动解包）
 │   ├── security/           # 限流 / WAF / 黑白名单
 │   ├── migrate/            # 数据库迁移（SQLite↔MySQL）
 │   ├── backup/             # 备份（手动+定时）
@@ -176,7 +186,8 @@ gatewayhub/
 │   ├── src/i18n/           # 中英文语言包
 │   ├── src/views/          # 页面（看板/控制台/向导/安全/迁移/备份/健康...）
 │   └── src/assets/         # 中国/世界地图 GeoJSON
-└── data/ip2region.xdb      # 离线 IP 库
+├── data/                   # 运行数据（数据库 + IP 库）
+└── logs/                   # 访问日志（按天/小时）
 ```
 
 ---
@@ -207,6 +218,18 @@ server:
   host: "0.0.0.0"
   port: 8088
   base_domain: "localhost" # 子域名后缀（空则禁用子域名路由）
+
+database:
+  driver: sqlite
+  dsn: data/gateway.db    # 数据库放 data/ 目录
+
+geo:
+  enabled: true
+  db_path: data/ip2region.xdb  # 缺失时从二进制自动解包
+
+access_log:                # 访问日志落盘（含请求头，按天/小时）
+  enabled: true
+  dir: logs
 
 security:                 # 安全防护
   enabled: true

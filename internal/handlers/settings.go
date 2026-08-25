@@ -45,7 +45,7 @@ func (h *Handler) GetSettings(c *gin.Context) {
 		"language":   h.getSetting("language"),
 		"configured": h.IsConfigured(),
 		"db_driver":  h.Cfg.Database.Driver,
-		"version":    "1.1.0",
+		"version":    "1.2.0",
 	})
 }
 
