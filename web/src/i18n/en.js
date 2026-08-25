@@ -81,10 +81,12 @@ export default {
     name: 'Service Name',
     prefix: 'Route Name',
     target: 'Backend URL',
+    description: 'Description',
+    descriptionHint: 'Short intro of this mounted site, shown on the visitor page',
     timeout: 'Timeout',
     confirmDelete: 'Delete route "{name}"? This cannot be undone.',
     prefixHint: '3-60 chars, lowercase, / for multi-level (e.g. v2/beta)',
-    targetHint: ':8080 or :8080/api/v1 or full URL',
+    targetHint: ':8080 or :8080/api/v1 or full URL, supports ${ENV}',
     interval: 'Check Interval',
     intervalHint: 'Per-site probe interval (5-86400s, default 30)'
   },
@@ -200,6 +202,14 @@ export default {
     siteIntroHint: 'Shown in the homepage hero banner — what this portal does',
     language: 'Language',
     save: 'Save'
+  },
+  dashboard: {
+    changePassword: 'Change Password',
+    oldPassword: 'Old Password',
+    newPassword: 'New Password',
+    confirmPassword: 'Confirm New Password',
+    pwdMismatch: 'New passwords do not match',
+    minLength: 'New password must be at least 6 characters'
   },
   wizard: {
     title: 'Welcome to GatewayHub',

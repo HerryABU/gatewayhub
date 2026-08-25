@@ -81,10 +81,12 @@ export default {
     name: '服务名称',
     prefix: '转发名',
     target: '后端地址',
+    description: '站点介绍',
+    descriptionHint: '简要说明这个挂载站是做什么的，将展示在访客页',
     timeout: '超时',
     confirmDelete: '确认删除路由「{name}」？此操作不可恢复',
     prefixHint: '3-60 字符，小写字母开头，可用 / 分隔多级（如 v2/beta）',
-    targetHint: ':8080 或 :8080/api/v1 或完整 URL',
+    targetHint: ':8080 或 :8080/api/v1 或完整 URL，支持 ${ENV}',
     interval: '检查间隔',
     intervalHint: '每个站点独立探测间隔（5-86400 秒，默认 30）'
   },
@@ -200,6 +202,14 @@ export default {
     siteIntroHint: '展示在访客首页横幅的简介，说明这个门户是做什么的',
     language: '语言',
     save: '保存'
+  },
+  dashboard: {
+    changePassword: '修改密码',
+    oldPassword: '原密码',
+    newPassword: '新密码',
+    confirmPassword: '确认新密码',
+    pwdMismatch: '两次输入的新密码不一致',
+    minLength: '新密码长度至少 6 位'
   },
   wizard: {
     title: '欢迎使用 GatewayHub',

@@ -14,15 +14,16 @@ type User struct {
 
 // Route 路由配置表
 type Route struct {
-	ID        uint      `gorm:"primaryKey" json:"id"`
-	Name      string    `gorm:"size:100;not null" json:"name"`
-	Prefix    string    `gorm:"size:30;not null;uniqueIndex" json:"prefix"`
-	Target    string    `gorm:"size:500;not null" json:"target"`
-	Timeout   int       `gorm:"not null;default:5" json:"timeout"`
-	Interval  int       `gorm:"not null;default:30" json:"interval"` // 健康检查间隔（秒），0 用全局默认
-	Status    string    `gorm:"size:20;not null;default:active" json:"status"` // active / inactive
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID          uint      `gorm:"primaryKey" json:"id"`
+	Name        string    `gorm:"size:100;not null" json:"name"`
+	Prefix      string    `gorm:"size:30;not null;uniqueIndex" json:"prefix"`
+	Target      string    `gorm:"size:500;not null" json:"target"`
+	Description string    `gorm:"size:500" json:"description"` // 站点介绍：该挂载站是做什么的（访客页展示）
+	Timeout     int       `gorm:"not null;default:5" json:"timeout"`
+	Interval    int       `gorm:"not null;default:30" json:"interval"` // 健康检查间隔（秒），0 用全局默认
+	Status      string    `gorm:"size:20;not null;default:active" json:"status"` // active / inactive
+	CreatedAt   time.Time `json:"created_at"`
+	UpdatedAt   time.Time `json:"updated_at"`
 }
 
 // AccessLog 访问日志表

@@ -100,6 +100,9 @@ const trendRef = ref()
 const detailRef = ref()
 let trendChart = null
 let detailChart = null
+let trendPending = null
+let trendObs = null
+let pendingTrend = null // 容器隐藏期间暂存的趋势数据（尺寸就绪后补渲染）
 const detailVisible = ref(false)
 const detailName = ref('')
 const cleanupVisible = ref(false)
@@ -145,10 +148,27 @@ async function loadTrend() {
   } catch (e) {}
 }
 
-function renderTrend(labels, values) {
-  if (!trendChart && trendRef.value) trendChart = echarts.init(trendRef.value)
-  if (!trendChart) return
-  trendChart.setOption({
+// 与地图同源的修复：隐藏 tab 中 init 会拿到 0 尺寸导致空白，
+// 尺寸就绪检测 + ResizeObserver，容器可见后自动补渲染（含暂存数据的 setOption）。
+function ensureTrend() {
+  const el = trendRef.value
+  if (!el) return
+  if (el.clientWidth === 0 || el.clientHeight === 0) {
+    trendPending = setTimeout(ensureTrend, 120)
+    return
+  }
+  clearTimeout(trendPending)
+  trendPending = null
+  if (!trendChart) trendChart = echarts.init(el)
+  if (pendingTrend) {
+    trendChart.setOption(buildTrendOption(pendingTrend.labels, pendingTrend.values))
+    pendingTrend = null
+  }
+  trendChart.resize()
+}
+
+function buildTrendOption(labels, values) {
+  return {
     tooltip: { trigger: 'axis' },
     grid: { left: 50, right: 20, top: 30, bottom: 30 },
     xAxis: { type: 'category', data: labels, boundaryGap: false, axisLine: { lineStyle: { color: '#1c2740' } }, axisLabel: { color: '#8494ad' } },
@@ -169,7 +189,20 @@ function renderTrend(labels, values) {
         lineStyle: { color: '#22d3ee', shadowColor: 'rgba(34,211,238,0.4)', shadowBlur: 12 }
       }
     ]
-  })
+  }
+}
+
+function renderTrend(labels, values) {
+  const el = trendRef.value
+  if (!el) return
+  if (el.clientWidth === 0 || el.clientHeight === 0) {
+    pendingTrend = { labels, values } // 暂存，待容器可见后渲染
+    ensureTrend()
+    return
+  }
+  pendingTrend = null
+  if (!trendChart) trendChart = echarts.init(el)
+  trendChart.setOption(buildTrendOption(labels, values))
 }
 
 async function openDetail(row) {
@@ -221,9 +254,18 @@ onMounted(() => {
   loadRoutes()
   loadTrend()
   window.addEventListener('resize', onResize)
+  trendObs = new ResizeObserver(() => {
+    const el = trendRef.value
+    if (el && el.clientWidth > 0 && el.clientHeight > 0) {
+      trendChart ? trendChart.resize() : ensureTrend()
+    }
+  })
+  if (trendRef.value) trendObs.observe(trendRef.value)
 })
 onUnmounted(() => {
   window.removeEventListener('resize', onResize)
+  trendObs && trendObs.disconnect()
+  if (trendPending) clearTimeout(trendPending)
   trendChart && trendChart.dispose()
   detailChart && detailChart.dispose()
 })

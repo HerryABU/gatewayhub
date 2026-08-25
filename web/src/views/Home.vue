@@ -98,6 +98,7 @@
                 <span class="row-name">{{ r.name }}</span>
                 <span class="gh-tag row-prefix">/{{ r.prefix }}</span>
               </div>
+              <div v-if="r.description" class="row-desc" :title="r.description">{{ r.description }}</div>
               <div class="row-bar">
                 <UptimeBar :history="r.history" :height="14" />
               </div>
@@ -436,7 +437,7 @@ function healthText(h) {
   display: flex;
   align-items: center;
   gap: 10px;
-  margin-bottom: 8px;
+  margin-bottom: 6px;
 }
 .row-name {
   font-size: 15px;
@@ -446,6 +447,16 @@ function healthText(h) {
   text-overflow: ellipsis;
 }
 .row-prefix { font-size: 11px; }
+.row-desc {
+  font-size: 12.5px;
+  color: var(--gh-text-dim);
+  line-height: 1.55;
+  margin-bottom: 8px;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
 .row-bar { display: flex; }
 .row-bar .uptime-bar { flex: 1; }
 .row-side {

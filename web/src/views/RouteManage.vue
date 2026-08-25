@@ -10,11 +10,17 @@
       </div>
       <el-table :data="routes" v-loading="loading">
         <el-table-column type="index" width="56" align="center" />
-        <el-table-column prop="name" :label="t('route.name')" min-width="150" />
-        <el-table-column :label="t('route.prefix')" min-width="130">
+        <el-table-column prop="name" :label="t('route.name')" min-width="140" />
+        <el-table-column :label="t('route.prefix')" min-width="120">
           <template #default="{ row }"><span class="gh-tag">/{{ row.prefix }}</span></template>
         </el-table-column>
-        <el-table-column prop="target" :label="t('route.target')" min-width="150" />
+        <el-table-column prop="description" :label="t('route.description')" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">
+            <span v-if="row.description" class="row-desc">{{ row.description }}</span>
+            <span v-else class="gh-dim">—</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="target" :label="t('route.target')" min-width="150" show-overflow-tooltip />
         <el-table-column :label="t('route.timeout')" width="80" align="center">
           <template #default="{ row }">{{ row.timeout }}s</template>
         </el-table-column>
@@ -48,6 +54,16 @@
         </el-form-item>
         <el-form-item :label="t('route.target')" prop="target">
           <el-input v-model="form.target" :placeholder="t('route.targetHint')" />
+        </el-form-item>
+        <el-form-item :label="t('route.description')">
+          <el-input
+            v-model="form.description"
+            type="textarea"
+            :rows="2"
+            maxlength="500"
+            show-word-limit
+            :placeholder="t('route.descriptionHint')"
+          />
         </el-form-item>
         <el-form-item :label="t('route.timeout')">
           <el-input-number v-model="form.timeout" :min="1" :max="60" /> <span class="gh-dim">s</span>
@@ -84,7 +100,7 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
 const formRef = ref()
-const form = reactive({ name: '', prefix: '', target: '', timeout: 5, interval: 30, status: 'active' })
+const form = reactive({ name: '', prefix: '', target: '', description: '', timeout: 5, interval: 30, status: 'active' })
 
 const rules = {
   name: [{ required: true, message: 'Name', trigger: 'blur' }],
@@ -104,12 +120,12 @@ async function load() {
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { name: '', prefix: '', target: '', timeout: 5, interval: 30, status: 'active' })
+  Object.assign(form, { name: '', prefix: '', target: '', description: '', timeout: 5, interval: 30, status: 'active' })
   dialogVisible.value = true
 }
 function openEdit(row) {
   isEdit.value = true
-  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, timeout: row.timeout, interval: row.interval || 30, status: row.status })
+  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, description: row.description || '', timeout: row.timeout, interval: row.interval || 30, status: row.status })
   dialogVisible.value = true
 }
 
@@ -170,5 +186,14 @@ onMounted(load)
   justify-content: space-between;
   align-items: center;
   margin-bottom: 14px;
+}
+.row-desc {
+  font-size: 12px;
+  color: var(--gh-text-dim);
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 </style>

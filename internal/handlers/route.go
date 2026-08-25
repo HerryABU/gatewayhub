@@ -22,11 +22,12 @@ var reservedPrefixes = map[string]bool{
 }
 
 type routeReq struct {
-	Name     string `json:"name"`
-	Target   string `json:"target"`
-	Timeout  int    `json:"timeout"`
-	Interval int    `json:"interval"`
-	Status   string `json:"status"`
+	Name        string `json:"name"`
+	Target      string `json:"target"`
+	Description string `json:"description"`
+	Timeout     int    `json:"timeout"`
+	Interval    int    `json:"interval"`
+	Status      string `json:"status"`
 }
 
 // validatePrefix 校验转发名（支持多级前缀，如 "v2/beta"，每段以小写字母开头）
@@ -86,12 +87,13 @@ func (h *Handler) ListRoutes(c *gin.Context) {
 // CreateRoute POST /api/routes
 func (h *Handler) CreateRoute(c *gin.Context) {
 	var req struct {
-		Name     string `json:"name" binding:"required"`
-		Prefix   string `json:"prefix" binding:"required"`
-		Target   string `json:"target" binding:"required"`
-		Timeout  int    `json:"timeout"`
-		Interval int    `json:"interval"`
-		Status   string `json:"status"`
+		Name        string `json:"name" binding:"required"`
+		Prefix      string `json:"prefix" binding:"required"`
+		Target      string `json:"target" binding:"required"`
+		Description string `json:"description"`
+		Timeout     int    `json:"timeout"`
+		Interval    int    `json:"interval"`
+		Status      string `json:"status"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -144,12 +146,13 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 	}
 
 	route := models.Route{
-		Name:     name,
-		Prefix:   prefix,
-		Target:   strings.TrimSpace(req.Target),
-		Timeout:  timeout,
-		Interval: interval,
-		Status:   status,
+		Name:        name,
+		Prefix:      prefix,
+		Target:      strings.TrimSpace(req.Target),
+		Description: strings.TrimSpace(req.Description),
+		Timeout:     timeout,
+		Interval:    interval,
+		Status:      status,
 	}
 	if err := h.DB.Create(&route).Error; err != nil {
 		h.fail(c, 2001, "创建失败")
@@ -212,6 +215,7 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 
 	route.Name = name
 	route.Target = strings.TrimSpace(req.Target)
+	route.Description = strings.TrimSpace(req.Description)
 	route.Timeout = timeout
 	route.Interval = interval
 	route.Status = status
