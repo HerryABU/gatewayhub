@@ -2,39 +2,22 @@ package rewrite
 
 import "bytes"
 
-// rewriteJS 只改写「资源类」根绝对路径（/assets、/static、/uploads…）。
+// rewriteJS 只改写「整页导航」这一类确定的 URL 用法（location.href = / assign( / replace(）。
 //
-// 为什么不改写 /api 字面量：JS 里 "/api/..." 既可能是请求 URL，也可能是
-// **请求体数据**（NVS 的 /api/batch 就是 {path:"/api/nav-layout"} 这类结构）。
-// 对它做字面量改写会污染业务数据（实测后端回 "path 必须以 /api/ 开头"，
-// 11 个子请求全挂、顶部导航整条消失）。API 前缀改由注入的运行期 shim
-// 在真正发请求时补（见 shim.go），静态层只碰确定的资源 URL。
+// 为什么不改写其它 JS 字面量：JS 里以 "/" 开头的字符串**无法从文本上判断用途**。
+// 已经被真实踩中两次：
+//   - NVS：`/api/batch` 的请求体是 {id,method,path}，path 值形如 "/api/nav-layout"，
+//     被改写成 "./api/nav-layout" 后后端回 "path 必须以 /api/ 开头"，11 个子请求全挂、
+//     顶部导航整条消失；
+//   - openlist：接口写成 `$.get(\`/public/plugins\`)`，而 "/public" 看起来像静态资源目录，
+//     被加上前缀后与 axios baseURL 叠加成 /openlist/api/openlist/public/plugins。
+// 这类碰撞无法用「可信前缀白名单」穷举，只能不在文本层猜。
+//
+// 因此策略是：静态层只碰 HTML 属性 / CSS / 整页导航；真正发出去的请求
+// （fetch / XHR / sendBeacon / EventSource / WebSocket / pushState）与 DOM 的 src/href
+// 全部由注入的运行期 shim（shim.go）在发起时补前缀 —— 只碰请求，不碰数据。
 func (rw *Rewriter) rewriteJS(b []byte) []byte {
 	s := string(b)
-	// 1) 单/双引号「以 / 开头」的字符串字面量（根相对资源路径）
-	s = jsRootPathRe.ReplaceAllStringFunc(s, func(m string) string {
-		sub := jsRootPathRe.FindStringSubmatch(m)
-		if len(sub) != 4 {
-			return m
-		}
-		content := sub[2]
-		if !isRootPath(content) {
-			return m
-		}
-		return sub[1] + rw.rewritePath(content) + sub[3]
-	})
-	// 2) 反引号模板字面量（仅无 ${} 插值）
-	s = jsTemplateRe.ReplaceAllStringFunc(s, func(m string) string {
-		sub := jsTemplateRe.FindStringSubmatch(m)
-		if len(sub) != 2 {
-			return m
-		}
-		if !isRootPath(sub[1]) {
-			return m
-		}
-		return "`" + rw.rewritePath(sub[1]) + "`"
-	})
-	// 3) 整页导航：location.href = / assign( / replace( 的根相对路径
 	s = locationRe.ReplaceAllStringFunc(s, func(m string) string {
 		sub := locationRe.FindStringSubmatch(m)
 		if len(sub) != 5 {
@@ -50,23 +33,9 @@ func needsCSSRewrite(b []byte) bool {
 	return bytes.Contains(b, []byte("url(")) || bytes.Contains(b, []byte("@import"))
 }
 
-// needsJSRewrite 快速预检：JS 中是否可能包含需要重写的根相对路径。
-// 先粗筛是否含 '/'（第三方库等多数无路径，单次扫描即返回），命中再逐前缀精确匹配，
-// 避免对每个前缀做一次全量 bytes.Contains。
+// needsJSRewrite 快速预检：JS 中是否出现「整页导航」写法。
+// 只认这三处，绝大多数第三方库与业务代码直接跳过（大文件零成本）。
 func needsJSRewrite(b []byte) bool {
-	if !bytes.Contains(b, []byte("/")) {
-		return false
-	}
-	for _, p := range rewriteRootPathPrefixes {
-		if bytes.Contains(b, []byte(p)) {
-			return true
-		}
-	}
-	for _, p := range rewriteFilePrefixes {
-		if bytes.Contains(b, []byte(p)) {
-			return true
-		}
-	}
 	return bytes.Contains(b, []byte("location.href")) ||
 		bytes.Contains(b, []byte("location.assign")) ||
 		bytes.Contains(b, []byte("location.replace"))

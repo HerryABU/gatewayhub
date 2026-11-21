@@ -30,6 +30,10 @@ const prefixShimTemplate = `(function(){
     if(typeof u!=="string"||!u)return u;
     if(u.charCodeAt(0)!==47)return u;
     if(u.charCodeAt(1)===47)return u;
+    // 两层改写叠在一起时收敛成一层：静态改写已经加过前缀、运行期基准又拼了一次
+    // （vite preload 助手是 __dynamic_base__ 加 dep，dep 在 HTML 里被静态加过前缀），
+    // 请求会落到 /prefix/prefix/assets/*。这里幂等收敛，不改变最终语义。
+    while(u.indexOf(P+P+"/")===0)u=u.slice(P.length);
     if(u===P||u.indexOf(PS)===0)return u;
     return P+u;
   }

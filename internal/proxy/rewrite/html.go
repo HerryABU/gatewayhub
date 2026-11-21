@@ -8,8 +8,11 @@ import (
 // ---- HTML 重写 ----
 
 var (
-	htmlAttrRe    = regexp.MustCompile(`(?i)(\b(?:src|href|action|poster|data-src|data-href|data-url)\s*=\s*["'])(/[^"'\s>]*)(["'])`)
-	htmlSrcsetRe  = regexp.MustCompile(`(?i)(\b(?:srcset|data-srcset)\s*=\s*["'])([^"']*)(["'])`)
+	// 属性名前必须有空白（不能用 \b：`data-src=` 里 src 前是 '-'，\b 成立会被误命中）。
+	// 延迟地址（data-src / data-srcset 等）会被前端再拼一次基准
+	//（vite legacy polyfill：__dynamic_base__ + data-src），提前改写会拼成 /prefix/prefix/...。
+	htmlAttrRe    = regexp.MustCompile(`(?i)(\s(?:src|href|action|poster)\s*=\s*["'])(/[^"'\s>]*)(["'])`)
+	htmlSrcsetRe  = regexp.MustCompile(`(?i)(\ssrcset\s*=\s*["'])([^"']*)(["'])`)
 	metaRefreshRe = regexp.MustCompile(`(?i)(<meta[^>]*content\s*=\s*["'])([^"]*url\s*=\s*/[^"]*)(["'])`)
 	metaURLRe     = regexp.MustCompile(`(?i)(url\s*=\s*)(/[^"'\s]*)`)
 	styleBlockRe  = regexp.MustCompile(`(?is)(<style[^>]*>)(.*?)(</style>)`)
@@ -19,11 +22,6 @@ var (
 	cssImportRe   = regexp.MustCompile(`(?i)(@import\s+)(["'])(/[^"']+)(["'])`)
 	scriptBlockRe = regexp.MustCompile(`(?is)(<script\b[^>]*>)(.*?)(</script>)`)
 	scriptSrcRe   = regexp.MustCompile(`(?i)\bsrc\s*=`)
-	// JS 中「以 / 开头」的字符串字面量（根相对路径）。只匹配这类，
-	// 避免对每个字符串都回调判断，大幅减少大文件的重写开销。
-	jsRootPathRe = regexp.MustCompile(`(["'])(/(?:[^"'\\]|\\.)*)(["'])`)
-	// JS 模板字面量（无 ${} 插值的简单场景）
-	jsTemplateRe = regexp.MustCompile("`(/[^`$]*)`")
 	// JS 整页导航：location.href / assign / replace 的根相对路径
 	locationRe = regexp.MustCompile(`(?i)(\blocation\.(?:href\s*=|assign\s*\(|replace\s*\()\s*)(["'])(/[^"'\s)]*)(["'])`)
 	// HTML <head> 与 <base>：用于注入/改写 <base href>，欺骗前端路由器基址
@@ -103,11 +101,14 @@ func (rw *Rewriter) rewriteHTML(b []byte) []byte {
 	// 4.6) 运行期挂载点声明（base_path / basename / baseURL = "/"）：改写为网关前缀。
 	//     SPA 的路由 basename、axios baseURL、运行时资源前缀都从这里取值，
 	//     不改这一处，前两者会在浏览器端拼出根路径（实测 openlist：白屏 + 全部 API 404）。
-	s, _ = rw.rewriteBasePathConfig(s)
+	s, baseHits := rw.rewriteBasePathConfig(s)
 
 	// 5) 注入 <base>，让前端路由器（Vue Router createWebHistory 等）与文档相对路径以 /prefix/ 为基址。
-	//    无论后端是否位于子路径（root）都注入——相对路径解析统一依赖它。
-	s = rw.injectBase(s)
+	//    仅在应用**没有**自述挂载点时注入：已经改写了 base_path 的应用自己就知道挂在哪，
+	//    再叠一层 <base> 会让 `baseURL`/`new URL(x, baseURI)` 各拼一次 → /prefix/prefix/...。
+	if baseHits == 0 {
+		s = rw.injectBase(s)
+	}
 
 	// 6) 注入运行期前缀兜底脚本（fetch/XHR/WS/DOM 属性统一补前缀）。
 	//    它承担「JS 字面量不能乱改」的那部分职责：只改请求，不改数据。

@@ -165,143 +165,40 @@ func contains(s, sub string) bool {
 
 func TestRewriteJS(t *testing.T) {
 	rw := New("app", "", "")
-	in := `fetch("/api/site-info");axios.get('/api/categories');import("/assets/chunk.js");const base="/api";api.get('/setup/env-check');api.get("/auth/me");const x="/";window.location.href='/login';location.assign("/register");`
+	in := `fetch("/api/site-info");axios.get('/api/categories');import("/assets/chunk.js");const x="/";window.location.href='/login';location.assign("/register");`
 	out := string(rw.rewriteJS([]byte(in)))
 	checks := []string{
-		`fetch("/api/site-info")`,          // API 字面量不动（可能被当请求体数据发给后端）
-		`axios.get('/api/categories')`,     // 同上：由运行期 shim 补前缀
-		`"/app/assets/chunk.js"`,           // 动态 import 资源保留前缀绝对（module 基准）
-		`const base="/api"`,                // baseURL 不再相对化（避免污染数据/双重前缀）
-		`api.get('/setup/env-check')`,      // 相对端点不改写
-		`api.get("/auth/me")`,              // 相对端点不改写
-		`const x="/"`,                      // 单个 / 不重写
-		`location.href='/app/login'`,       // 整页导航保留前缀绝对
-		`location.assign("/app/register")`, // assign 保留前缀绝对
+		// 非导航字面量一律不动：文本层判不出「URL 还是请求体数据」，由运行期 shim 处理
+		`fetch("/api/site-info")`,
+		`axios.get('/api/categories')`,
+		`import("/assets/chunk.js")`,
+		`const x="/"`,
+		// 整页导航：保留前缀绝对（最稳，不依赖 document base）
+		`location.href='/app/login'`,
+		`location.assign("/app/register")`,
 	}
 	for _, c := range checks {
 		if !contains(out, c) {
 			t.Errorf("rewriteJS 未包含 %q\n输出:\n%s", c, out)
 		}
 	}
-	// 不能产生双重前缀 /app/api/app/...（baseURL 与相对端点叠加）
-	if contains(out, "/app/api/app") {
-		t.Errorf("rewriteJS 出现双重前缀:\n%s", out)
+	if contains(out, "/app/assets/") {
+		t.Errorf("JS 资源字面量不应被静态改写:\n%s", out)
 	}
 }
 
-func TestIsRootPath(t *testing.T) {
-	cases := []struct {
-		in   string
-		want bool
-	}{
-		// 资源前缀：重写
-		{"/assets/app.js", true},
-		{"/static/logo.png", true},
-		{"/uploads/a.jpg", true},
-		{"/media/x.mp4", true},
-		{"/images/a.png", true},
-		{"/img/a.png", true},
-		{"/fonts/f.woff2", true},
-		{"/css/a.css", true},
-		{"/js/a.js", true},
-		{"/public/a.js", true},
-		{"/dist/a.js", true},
-		{"/files/a.pdf", true},
-		{"/favicon.ico", true},
-		{"/logo.png", true},
-		{"/icon.svg", true},
-		{"/manifest.json", true},
-		{"/robots.txt", true},
-		// API 前缀 / axios 相对端点 / 业务路由：都不在 JS 字面量层重写
-		// （"/api" 既可能是 URL 也可能是请求体数据，静态改写会污染业务数据，
-		//  改由运行期 shim 在发请求时补前缀）
-		{"/api", false},
-		{"/api/user", false},
-		{"/setup/env-check", false},
-		{"/auth/me", false},
-		{"/login", false},
-		{"/register", false},
-		{"/user/info", false},
-		// 边界
-		{"/", false},
-		{"//cdn.x.com/a.js", false},
-		{"/*", false},
-		{"relative", false},
-		{"", false},
-	}
-	for _, c := range cases {
-		if got := isRootPath(c.in); got != c.want {
-			t.Errorf("isRootPath(%q) = %v, want %v", c.in, got, c.want)
-		}
-	}
-}
-
-func TestNeedsRewrite(t *testing.T) {
-	if needsJSRewrite([]byte(`fetch("/api/x")`)) {
-		t.Error("只有 /api 不应命中（API 由运行期 shim 处理）")
-	}
-	if !needsJSRewrite([]byte(`import("/assets/x.js")`)) {
-		t.Error("含 /assets 应命中")
-	}
-	if !needsJSRewrite([]byte(`img.src="/static/a.png"`)) {
-		t.Error("含 /static 应命中")
-	}
-	if !needsJSRewrite([]byte(`location.href='/login'`)) {
-		t.Error("含 location.href 应命中")
-	}
-	if needsJSRewrite([]byte(`const x = 1 + 2; console.log("hello world");`)) {
-		t.Error("纯逻辑 JS 不应命中")
-	}
-	if !needsCSSRewrite([]byte(`.a{background:url(/bg.png)}`)) {
-		t.Error("含 url( 应命中")
-	}
-	if needsCSSRewrite([]byte(`.a{color:red}`)) {
-		t.Error("无 url/@import 不应命中")
-	}
-}
-
-func TestRewriteJSResources(t *testing.T) {
-	rw := New("app", "", "")
-	in := `const img="/static/logo.png";const up="/uploads/a.jpg";const ico="/favicon.ico";const font="/fonts/f.woff2";`
-	out := string(rw.rewriteJS([]byte(in)))
-	checks := []string{
-		`"/app/static/logo.png"`,
-		`"/app/uploads/a.jpg"`,
-		`"/app/favicon.ico"`,
-		`"/app/fonts/f.woff2"`,
-	}
-	for _, c := range checks {
-		if !contains(out, c) {
-			t.Errorf("rewriteJS 资源路径未改写 %q\n输出:\n%s", c, out)
-		}
-	}
-}
-
-// TestRewriteJSMidFileImport 验证「动态 import 位于大文件中部」也能被重写，
-// 回归修复：曾因 Peek 64KB 预检漏判导致 SPA 路由懒加载 chunk 404。
 func TestRewriteJSMidFileImport(t *testing.T) {
 	rw := New("app", "", "")
-	// 前 80KB 为无路径的 runtime 代码，动态 import 声明在 80KB 之后（文件中部）
 	var sb strings.Builder
 	sb.WriteString(`const runtime="` + strings.Repeat("x", 80*1024) + `";`)
 	sb.WriteString(`const routes=[{path:"/home",component:()=>import("/assets/AuthorHome-abc.js")}];`)
 	sb.WriteString(`import("/assets/core-def.js");`)
-	out := string(rw.rewriteJS([]byte(sb.String())))
-	checks := []string{
-		`"/app/assets/AuthorHome-abc.js"`,
-		`"/app/assets/core-def.js"`,
-	}
-	for _, c := range checks {
-		if !contains(out, c) {
-			t.Errorf("大文件中部的 import 未重写，缺失 %q", c)
-		}
-	}
-	// 需要重写判断应命中（含 /assets）
-	if !needsJSRewrite([]byte(sb.String())) {
-		t.Errorf("needsJSRewrite 应命中含 /assets 的大文件")
+	// 大文件中部也不改写：避免「预检窗口漏判」这类历史问题的同时，
+	// 彻底消除把业务数据当路径改写的风险（见 TestRewriteJSSkipsAPIPaths）。
+	if out := string(rw.rewriteJS([]byte(sb.String()))); out != sb.String() {
+		t.Errorf("大文件中的 import 不应被静态改写")
 	}
 }
-
 func TestInjectBase(t *testing.T) {
 	rw := New("app", "", "")
 
@@ -523,5 +420,29 @@ window.APP = { base_path: '/', cdn: '' }
 	// 空前缀：原样
 	if b, n := PrepareHTML("", []byte(html)); n != 0 || string(b) != html {
 		t.Errorf("空前缀应原样返回")
+	}
+}
+
+// TestShimCollapsesDoublePrefix 校验运行期兜底的幂等收敛：
+// 静态层与运行期基准各加一次前缀时，请求不能落到 /prefix/prefix/...。
+func TestShimCollapsesDoublePrefix(t *testing.T) {
+	shim := New("openlist", "", "").prefixShim()
+	if !strings.Contains(shim, "P+P") {
+		t.Fatalf("shim 应包含双重前缀收敛逻辑:\n%s", shim)
+	}
+}
+
+// TestHTMLAttrSkipsDeferred 校验延迟地址（data-src/data-href）不被静态改写。
+func TestHTMLAttrSkipsDeferred(t *testing.T) {
+	in := `<script nomodule id="vite-legacy-entry" data-src="/assets/index-legacy.js"></script>
+<img data-src="/assets/lazy.png" src="/assets/real.png">`
+	out := string(New("openlist", "", "").rewriteHTML([]byte(in)))
+	for _, keep := range []string{`data-src="/assets/index-legacy.js"`, `data-src="/assets/lazy.png"`} {
+		if !strings.Contains(out, keep) {
+			t.Errorf("延迟地址不应改写，缺少 %q\n%s", keep, out)
+		}
+	}
+	if !strings.Contains(out, `src="./assets/real.png"`) {
+		t.Errorf("普通 src 应改写为文档相对\n%s", out)
 	}
 }

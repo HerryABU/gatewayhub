@@ -100,43 +100,6 @@ func relPath(baseDir, target string) string {
 	return "./" + strings.Join(parts, "/")
 }
 
-// rewriteRootPathPrefixes 是需要在 JS 字面量层重写的根相对「资源」路径前缀。
-// 这些代表真实静态资源路径（如 /assets/app.js、/static/logo.png），一定按 URL 使用。
-//
-// ⚠️ 不要把 "/api" 加回来：JS 里 "/api/..." 既可能是请求 URL，也可能是请求体数据
-// （NVS /api/batch 的 path 字段就是这种），静态改写会污染业务数据。
-// API 前缀由注入的运行期 shim（shim.go）在发请求时补，只改请求不改数据。
-var rewriteRootPathPrefixes = []string{
-	"/assets", "/static", "/uploads", "/media", "/images",
-	"/img", "/fonts", "/css", "/js", "/public", "/dist", "/files",
-}
-
-// rewriteFilePrefixes 是带扩展名的常见资源前缀（精确匹配前缀，非路径段）。
-var rewriteFilePrefixes = []string{
-	"/favicon.", "/logo.", "/icon.", "/manifest.", "/robots.",
-}
-
-// isRootPath 判断字符串是否为需要重写的「根相对资源」路径（不含 /api，理由见上）。
-func isRootPath(s string) bool {
-	if len(s) < 2 || s[0] != '/' {
-		return false
-	}
-	if strings.HasPrefix(s, "//") || strings.HasPrefix(s, "/*") {
-		return false
-	}
-	for _, p := range rewriteRootPathPrefixes {
-		if s == p || strings.HasPrefix(s, p+"/") {
-			return true
-		}
-	}
-	for _, p := range rewriteFilePrefixes {
-		if strings.HasPrefix(s, p) {
-			return true
-		}
-	}
-	return false
-}
-
 // modify 作为 httputil.ReverseProxy.ModifyResponse，重写响应头与响应体。
 // 性能设计（透明代理 + 逼近源站速度）：
 //   - 只对 HTML/CSS/JS 文本做内容重写，图片/字体/视频等二进制直接透传。
