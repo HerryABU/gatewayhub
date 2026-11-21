@@ -41,7 +41,8 @@ export default {
     unknown: '未知',
     serviceList: '服务列表',
     autoRefresh: '每 10 秒自动刷新',
-    accessFormat: '访问格式：http://gateway:8088/{转发名}/{自有路径}',
+    // 注意：vue-i18n 把 {} 当占位符语法，路径示例必须避开花括号（曾导致整条消息编译失败）
+    accessFormat: '访问格式：http://gateway:8088/转发名/自有路径',
     serviceName: '服务名称',
     forwardName: '转发名',
     backend: '后端地址',

@@ -41,7 +41,8 @@ export default {
     unknown: 'Unknown',
     serviceList: 'Service List',
     autoRefresh: 'Auto-refresh every 10s',
-    accessFormat: 'Access format: http://gateway:8088/{name}/{path}',
+    // vue-i18n treats {} as placeholder syntax; keep the path sample brace-free
+    accessFormat: 'Access format: http://gateway:8088/name/path',
     serviceName: 'Service Name',
     forwardName: 'Route Name',
     backend: 'Backend',
