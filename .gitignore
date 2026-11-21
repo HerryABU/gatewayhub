@@ -7,6 +7,11 @@ web/dist/
 gatewayhub
 gatewayhub.exe
 *.exe
+# 根目录构建产物（build-all.ps1 编译后复制而来；linux/macOS 产物无后缀，*.exe 覆盖不到）
+gatewayhub-linux-*
+gatewayhub-mac-*
+gatewayhub-win-*
+gatewayhub-legacy-*
 release/
 release.old/
 release.old.*/

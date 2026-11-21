@@ -8,13 +8,15 @@
     .\build-all.ps1 -Platforms windows    # 仅编译 Windows（仍会先构建前端）
     .\build-all.ps1 -SkipFrontend         # 跳过前端构建（用现有 web/dist）
     .\build-all.ps1 -Platforms windows,linux -SkipFrontend
+    .\build-all.ps1 -NoRootCopy           # 只产出到 release\，不复制到仓库根目录
 
-  产物输出: .\release\
+  产物输出: .\release\（默认同时复制一份到仓库根目录，方便直接双击运行）
   要求: Go 1.21+、Node 18+（npm 在 PATH 中）、data/ip2region.xdb（已入库）
 #>
 param(
     [string[]]$Platforms = @("windows", "linux", "darwin"),
-    [switch]$SkipFrontend
+    [switch]$SkipFrontend,
+    [switch]$NoRootCopy
 )
 
 $ErrorActionPreference = "Continue"
@@ -153,6 +155,23 @@ if ($fail -eq 0) {
     Get-ChildItem $outDir | ForEach-Object {
         Write-Host ("    {0,-32} {1,8:N1} MB" -f $_.Name, ($_.Length / 1MB))
     }
+
+    # 复制一份到仓库根目录：release\ 是归档目录，根目录便于直接双击/部署。
+    # 逐个 Copy-Item -Force（不删任何文件），失败只警告不改变退出码。
+    if (-not $NoRootCopy) {
+        $copied = 0; $copyFail = 0
+        foreach ($f in Get-ChildItem $outDir -File) {
+            try {
+                Copy-Item -LiteralPath $f.FullName -Destination (Join-Path $root $f.Name) -Force -ErrorAction Stop
+                $copied++
+            } catch {
+                Write-Host "  [WARN] 复制到根目录失败: $($f.Name) - $($_.Exception.Message)" -ForegroundColor Yellow
+                $copyFail++
+            }
+        }
+        if ($copyFail -eq 0) { Write-OK "已复制 $copied 个产物到仓库根目录（-NoRootCopy 可禁用）" }
+    }
+
     Write-Host "`n完成！可分发整个 release 目录（每个二进制均为单文件自包含：前端+IP库内嵌）。" -ForegroundColor Green
     if (-not $upxAvailable) {
         Write-Host "提示: 将 upx.exe 放到 ..\upx\upx-5.2.0-win64\ 可启用压缩减小体积。" -ForegroundColor Yellow
