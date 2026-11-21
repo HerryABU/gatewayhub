@@ -9,6 +9,7 @@ gatewayhub.exe
 *.exe
 release/
 release.old/
+release.old.*/
 
 # 数据库
 gateway.db

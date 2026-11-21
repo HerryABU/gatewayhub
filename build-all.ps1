@@ -66,9 +66,17 @@ Write-OK "dist: index.html + assets"
 # ---------------- 2. 清理输出目录 ----------------
 Write-Step "2/3 准备输出目录"
 if (Test-Path $outDir) {
-    # 保留旧包备份，避免构建中断丢失
+    # 保留旧包备份，避免构建中断丢失。
+    # 注：清理上一份备份失败（权限/占用/被安全策略拦截）时改用时间戳名，
+    #     绝不让「清理备份」把整次构建搞挂（曾因 Remove-Item 被拦导致 fail-closed）。
     $oldDir = "$outDir.old"
-    if (Test-Path $oldDir) { Remove-Item -Recurse -Force $oldDir -ErrorAction SilentlyContinue }
+    if (Test-Path $oldDir) {
+        try {
+            Remove-Item -Recurse -Force $oldDir -ErrorAction Stop
+        } catch {
+            $oldDir = "$outDir.old." + (Get-Date -Format 'yyyyMMdd-HHmmss')
+        }
+    }
     Rename-Item $outDir $oldDir -ErrorAction SilentlyContinue
     Write-Host "  旧产物已备份到 $oldDir"
 }
@@ -110,7 +118,8 @@ foreach ($t in $targets) {
     $env:GOOS = $t.OS
     $env:GOARCH = $t.Arch
     $env:GOAMD64 = ""; $env:GO386 = ""
-    if ($t.Goarm) { $env:GOARM = $t.Goarm } else { Remove-Item Env:GOARM -ErrorAction SilentlyContinue }
+    # 空串等价于「未设置」，无需 Remove-Item Env:（后者在受限环境会被安全策略拦截）
+    if ($t.Goarm) { $env:GOARM = $t.Goarm } else { $env:GOARM = "" }
 
     $outFile = "$outDir\$($t.Name)"
     Write-Host "[$idx/$($targets.Count)] $($t.Desc) " -NoNewline
