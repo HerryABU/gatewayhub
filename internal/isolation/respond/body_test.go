@@ -144,3 +144,36 @@ func TestCodecRoundTrip(t *testing.T) {
 		t.Fatalf("重新压缩后解码失败: %v", err)
 	}
 }
+
+// TestRewriteLiteralsSkipsDataSrc 校验「延迟地址」属性的边界：
+// data-src / data-href 的值会被前端再拼一次基准（如 vite legacy 的
+// __dynamic_base__ + data-src），提前加前缀会拼成 /A/A/... 的双重前缀。
+// 属性名判定必须以空白起始，不能靠 \b（"data-src" 的 src 前是 '-'）。
+func TestRewriteLiteralsSkipsDataSrc(t *testing.T) {
+	in := `<html><head>
+<script nomodule id="vite-legacy-entry" data-src="/assets/index-legacy.js"></script>
+<script data-src='/assets/polyfills.js'></script>
+<a data-href="/x">x</a>
+<img src="/assets/p.png">
+</head></html>`
+	out, _ := RewriteLiterals([]byte(in), KindHTML, "/A")
+	s := string(out)
+
+	// 真正参与解析的 src 仍然要加前缀
+	if !strings.Contains(s, `src="/A/assets/p.png"`) {
+		t.Errorf("普通 src 应加前缀\n%s", s)
+	}
+	// 延迟地址保持原样（交给前端与基准拼接）
+	for _, keep := range []string{
+		`data-src="/assets/index-legacy.js"`,
+		`data-src='/assets/polyfills.js'`,
+		`data-href="/x"`,
+	} {
+		if !strings.Contains(s, keep) {
+			t.Errorf("延迟地址不应改写，缺少 %q\n%s", keep, s)
+		}
+	}
+	if strings.Contains(s, "/A/A/") {
+		t.Errorf("出现双重前缀\n%s", s)
+	}
+}

@@ -225,12 +225,14 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 		return
 	}
 	out, hits := respond.RewriteLiterals(decoded, kind, cfg.Prefix)
-	// HTML 额外注入「运行期前缀兜底」：隔离引擎的字面量改写不碰 JS 运行期路径，
-	// 否则 fetch('/api/x')、axios('/api') 会绕过前缀打到网关根路径（NVS 实测：顶部导航整条消失）。
+	// HTML 额外做「挂载准备」：改写运行期挂载点声明（base_path/basename/baseURL = "/"）
+	// 并注入运行期前缀兜底（fetch/XHR/WS/导航/DOM 属性补前缀）。
+	// 否则 fetch('/api/x')、axios('/api') 与运行时拼的资源地址会绕过前缀打到网关根路径
+	// （NVS 实测：顶部导航整条消失；openlist 实测：白屏 + 全部接口 404）。
 	if kind == respond.KindHTML {
-		if injected, ok := rewrite.InjectShim(cfg.Prefix, out); ok {
-			out = injected
-			hits++
+		if prepared, n := rewrite.PrepareHTML(cfg.Prefix, out); n > 0 {
+			out = prepared
+			hits += n
 		}
 	}
 	if hits == 0 {

@@ -34,8 +34,12 @@ func DetectKind(contentType string) Kind {
 // 只改写「带上下文的字面量」，避免误伤 JSON、注释、正文里的 "/xxx"：
 //   - href="/  src="/  action="/
 //   - url(/  url("/  url('/（CSS 与内联 style）
+//
+// 属性名前必须有空白：否则 `\bsrc=` 会连带命中 `data-src=`，而 `data-src` 是
+// 「交给 JS 再拼一次基准」的延迟地址（vite legacy polyfill 就是
+// `__dynamic_base__ + data-src`），被提前加前缀会拼成 /prefix/prefix/... 。
 var (
-	attrRe = regexp.MustCompile(`(?i)(\b(?:href|src|action)\s*=\s*)(["'])(/[^"'\s>]*)(["'])`)
+	attrRe = regexp.MustCompile(`(?i)(\s(?:href|src|action)\s*=\s*)(["'])(/[^"'\s>]*)(["'])`)
 	cssRe  = regexp.MustCompile(`(?i)(url\(\s*)(["']?)(/[^'")\s]*)(["']?)`)
 )
 
