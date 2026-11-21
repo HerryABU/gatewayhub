@@ -26,6 +26,8 @@
 - **Cookie 帽子**：`A__session` 按服务加前缀，响应侧 `Path=/` 收紧为 `Path=/A`，多值逐条处理且不丢 `HttpOnly/Secure/SameSite`
 - **响应修正**：`Location` 按模式补前缀并屏蔽指向后端的绝对 URL；`Set-Cookie` 加帽；HTML/CSS 只改 `href=/src=/action=/url(` 这类带上下文字面量
 - **可控降级**：单服务连续失败自动熔断（其他服务不受影响），一条 API 即可把服务切到 `isolated`
+- **越界归因**：后端前端没配 base path 时打到根路径的 `/assets/*`、`/api/*` 会被识别并归因到具体服务（`abs_prefix_hits`），不再只是一条无意义的 404
+- **自环守卫**：strip 模式下后端自带 base path 造成的 302 死循环，第二次命中直接返回 508 + 修复建议，不让浏览器转到 `ERR_TOO_MANY_REDIRECTS`
 - **可观测**：按服务统计请求/4xx-5xx/改写命中/改写失败/熔断/重定向循环，日志按「后端 bug / 代理改写失败 / 配置错误」分类
 - **控制台可视化**：左侧「🧩 路径隔离」页可看每个服务的配置与实时指标、下拉切模式一键降级、查看配置告警与变更审计，改完 `isolation.yaml` 点一下即热加载
 - 详见 [docs/isolation-gateway.md](docs/isolation-gateway.md)

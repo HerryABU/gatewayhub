@@ -237,6 +237,7 @@ export default {
     bodySkipped: '体跳过',
     breakerTrips: '熔断次数',
     loopAlerts: '循环告警',
+    absPrefixHits: '越界前缀',
     degrade: '降级',
     confirmDowngrade: '将服务「{name}」切换到 isolated（仅头层修正，响应体一个字节都不改）？',
     audit: '配置变更审计',

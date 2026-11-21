@@ -291,7 +291,8 @@ function metricCells(m) {
     { k: t('isolation.bodySkipped'), v: m.body_skipped },
     { k: t('isolation.backendErrors'), v: m.backend_errors, cls: m.backend_errors ? 'danger' : '' },
     { k: t('isolation.breakerTrips'), v: m.breaker_trips },
-    { k: t('isolation.loopAlerts'), v: m.loop_alerts, cls: m.loop_alerts ? 'danger' : '' }
+    { k: t('isolation.loopAlerts'), v: m.loop_alerts, cls: m.loop_alerts ? 'danger' : '' },
+    { k: t('isolation.absPrefixHits'), v: m.abs_prefix_hits, cls: m.abs_prefix_hits ? 'danger' : '' }
   ]
 }
 

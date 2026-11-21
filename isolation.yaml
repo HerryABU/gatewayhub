@@ -85,3 +85,13 @@ services: []
 #     cookie_hat: "SPA__"
 #     html_rewrite: true
 #     no_full_compat: true   # 运行时 fetch('/api') / import('/chunk.js') 代理层不承诺改写
+#
+#   # 4) openlist / alist 这类「前端按自身 base_path 拼路径」的 SPA（实测 v4.2.10）
+#   #    必须 pass-through + 后端自己配子路径，否则 strip 会把 /openlist 剥成 /，
+#   #    而后端又把 / 302 回 /openlist → 死循环（网关第 2 次命中直接回 508）。
+#   #    后端侧：data/config.json 里 "site_url": "http://<代理域名>/openlist"（改完重启）
+#   - name: openlist
+#     target: 127.0.0.1:5244
+#     mode: pass-through
+#     cookie_hat: "openlist__"
+#     known_abs_prefixes: ["/assets", "/api"]   # 仅用于越界归因告警，不参与路由

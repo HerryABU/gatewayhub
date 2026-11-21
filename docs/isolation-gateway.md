@@ -113,7 +113,8 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 | `cookie_rewrites` / `cookies_dropped` | 加帽/丢弃次数 | 登录态异常时先看这两项 |
 | `html_hits` / `html_failures` / `body_skipped` | 字面量改写命中/失败/跳过 | 失败多为 gzip/br 编码或体积超限 |
 | `breaker_trips` | 熔断触发次数 | 结合 `breaker.state` 判断是否自动降级 |
-| `loop_alerts` | 重定向循环告警次数 | 通常对应后端 bug（如 302 回自身） |
+| `loop_alerts` | 重定向循环告警次数 | 通常对应后端 bug，或后端自带 base path 却用了 strip |
+| `abs_prefix_hits` | **越界归因**次数：请求未带服务前缀、但命中该服务声明的 `known_abs_prefixes`（已 404） | >0 基本等于「这个后端没配 base path」，见 §4.1 |
 
 日志分类（FR-18，责任边界一眼可辨）：
 
@@ -121,12 +122,52 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 |---|---|---|
 | `backend_bug` | 后端 | 非法 `Set-Cookie`、连接拒绝、超时 |
 | `rewrite_failed` | 代理 | gzip 解压失败、体积超限、编码不支持 |
-| `config_error` | 配置 | YAML 解析失败、字段非法、热加载失败 |
+| `config_error` | 配置 | YAML 解析失败、字段非法、热加载失败、`known_abs_prefixes` 越界归因、配置导致的重定向自环 |
 | `proxy_degrade` | 代理（主动） | 熔断打开、服务被禁用 |
 | `redirect_loop` | 后端（多为 bug） | 同一来源短时间反复 3xx |
 | `rewrite_ok` | 代理（正常） | 命中数与响应大小 |
 
 ---
+
+## 4.1 SPA 类服务接入指南（openlist / alist / 各类 Vite SPA）
+
+这类服务的前端会在**运行时**根据自己生成的 `base_path` 拼接资源与 API 地址。实测（openlist v4.2.10）：
+
+- `base_path` 由后端配置 `site_url` 的路径部分决定，`site_url` 为空时是 `/`；
+- 于是浏览器会去请求 **网关根路径** 的 `/assets/*.js`、`/api/public/settings` —— 这些路径没有服务前缀，
+  网关按 FR-3 一律 404（不猜测归属），页面上表现为「白屏 / 获取设置失败」。
+
+**唯一正确的接法：让后端自己认前缀，网关不再剥离。**
+
+1. 后端配置子路径（以 openlist 为例，`data/config.json`，改完需重启）：
+
+   ```json
+   { "site_url": "http://<代理域名>/openlist" }
+   ```
+
+   之后 openlist 自己就会把 `base_path` 变成 `/openlist`，`/` 也会 302 到 `/openlist`，
+   页面里的资源、`import()` 动态 chunk、API 全部自带前缀。
+
+2. 网关配置表里该服务必须是 **`pass-through`**（原样透传前缀），并且**不要**开 `html_rewrite`：
+
+   ```yaml
+   services:
+     - name: openlist
+       target: 127.0.0.1:5244
+       mode: pass-through
+       cookie_hat: "openlist__"
+       known_abs_prefixes: ["/assets", "/api"]   # 仅用于越界归因告警
+   ```
+
+3. 反过来，**strip + 后端自带 base path 是死局**：网关把 `/openlist` 剥成 `/`，后端又把 `/` 302 回
+   `/openlist`，循环闭合。网关会这样处理：
+
+   - 第一次命中：记一条 `redirect_loop` 诊断（明确写出「该服务疑似已配置 base path，应改 pass-through」），照常放行；
+   - 同一 服务+来源+后端路径 在 60 秒内第二次命中：判定为确定性死循环，返回 **508** 并附修复建议，
+     不再让浏览器转到 `ERR_TOO_MANY_REDIRECTS`。
+
+   判据是纯函数式的：`Location` 去掉服务前缀后与本次转发给后端的路径完全相同 —— 不可能前进。
+   一次性自跳（302 到同一路径 + 种 Cookie）不受影响，因为它不会连续命中。
 
 ## 5. 已知限制（代理层不承诺解决）
 

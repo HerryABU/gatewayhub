@@ -237,6 +237,7 @@ export default {
     bodySkipped: 'Body skipped',
     breakerTrips: 'Breaker trips',
     loopAlerts: 'Loop alerts',
+    absPrefixHits: 'Abs-prefix hits',
     degrade: 'Degrade',
     confirmDowngrade: 'Switch service "{name}" to isolated (header-only; response body untouched)?',
     audit: 'Config Change Audit',
