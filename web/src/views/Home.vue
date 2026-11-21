@@ -176,7 +176,7 @@ const showLogin = ref(false)
 const siteName = ref('GatewayHub')
 const intro = ref('')
 // 版本号以服务端 /api/settings 为准，i18n 里的值只作首帧兜底：
-// 前端产物是打进 exe 的，写死版本必然与后端脱节（曾出现页面 v1.5.0、接口 1.6.1）。
+// 前端产物是打进 exe 的，写死版本必然与后端脱节（曾出现页面 v1.5.0、接口 1.6.x）。
 const appVersion = ref(t('app.version'))
 let timer = null
 
