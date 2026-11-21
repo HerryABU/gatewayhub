@@ -129,50 +129,67 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 
 ---
 
-## 4.1 SPA 类服务接入指南（openlist / alist / 各类 Vite SPA）
+## 4.1 服务接入三级方案（路径前缀 / 后端自认 / 子域名）
 
-这类服务的前端会在**运行时**根据自己生成的 `base_path` 拼接资源与 API 地址。实测（openlist v4.2.10）：
+不同后端「知不知道自己被挂在子路径上」差别极大，按这个顺序选方案：
 
-- `base_path` 由后端配置 `site_url` 的路径部分决定，`site_url` 为空时是 `/`；
-- 于是浏览器会去请求 **网关根路径** 的 `/assets/*.js`、`/api/public/settings` —— 这些路径没有服务前缀，
-  网关按 FR-3 一律 404（不猜测归属），页面上表现为「白屏 / 获取设置失败」。
+### A. 路径前缀模式（默认推荐）：`strip` + `html_rewrite: true`
 
-**唯一正确的接法：让后端自己认前缀，网关不再剥离。**
+适用于「URL 以字符串字面量出现在 HTML/JS 里」的常规应用（Vue/React 打包产物、模板渲染站）。
+网关做两件事：
 
-1. 后端配置子路径（以 openlist 为例，`data/config.json`，改完需重启）：
+1. **静态改写**：HTML 属性、内联样式、外链 CSS 的根绝对路径改为相对/带前缀形式，
+   并注入 `<base href="/{服务名}/">`；
+2. **运行期兜底（前缀 shim）**：在 `<head>` 最前面注入一段脚本，给真正**发出去的请求**补前缀 ——
+   `fetch`、`XMLHttpRequest`（axios 走它）、`sendBeacon`、`EventSource`、`WebSocket`、
+   `history.pushState/replaceState`，以及 DOM 上的 `src`/`href`（`setAttribute` 与属性 setter 两条路）。
 
-   ```json
-   { "site_url": "http://<代理域名>/openlist" }
-   ```
+为什么必须分成两层：**JS 里以 `/` 开头的字符串既可能是 URL，也可能是请求体数据**。
+实测 NVS（`/api/batch` 的请求体是 `{id,method,path}`，`path` 值形如 `/api/nav-layout`）——
+早期实现把这类字面量也改写成 `./api/nav-layout`，后端直接回 `path 必须以 /api/ 开头`，
+11 个子请求全失败，顶部导航整条消失。所以现在**静态层只改资源类字面量**（`/assets`、`/static`…），
+**API 前缀一律交给 shim 在请求发出时补**：只碰请求，不碰数据。
 
-   之后 openlist 自己就会把 `base_path` 变成 `/openlist`，`/` 也会 302 到 `/openlist`，
-   页面里的资源、`import()` 动态 chunk、API 全部自带前缀。
+隔离引擎（`strip` + `html_rewrite`）与数据库路径路由（`/前缀/*`）用的是同一套 shim，行为一致。
 
-2. 网关配置表里该服务必须是 **`pass-through`**（原样透传前缀），并且**不要**开 `html_rewrite`：
+### B. 后端自认前缀：`pass-through`
 
-   ```yaml
-   services:
-     - name: openlist
-       target: 127.0.0.1:5244
-       mode: pass-through
-       cookie_hat: "openlist__"
-       known_abs_prefixes: ["/assets", "/api"]   # 仅用于越界归因告警
-   ```
+适合本来就有「站点子路径」配置项的应用（如 openlist 的 `site_url`、Java 的 `context-path`）。
+后端把 `base_path` 配成 `/{服务名}`，网关原样透传前缀、不改响应体：
 
-3. 反过来，**strip + 后端自带 base path 是死局**：网关把 `/openlist` 剥成 `/`，后端又把 `/` 302 回
-   `/openlist`，循环闭合。网关会这样处理：
+```yaml
+services:
+  - name: openlist
+    target: 127.0.0.1:5244
+    mode: pass-through
+    cookie_hat: "openlist__"
+    known_abs_prefixes: ["/assets", "/api"]   # 仅用于越界归因告警
+```
 
-   - 第一次命中：记一条 `redirect_loop` 诊断（明确写出「该服务疑似已配置 base path，应改 pass-through」），照常放行；
-   - 同一 服务+来源+后端路径 在 60 秒内第二次命中：判定为确定性死循环，返回 **508** 并附修复建议，
-     不再让浏览器转到 `ERR_TOO_MANY_REDIRECTS`。
+注意这是**应用侧声明**（改的是后端配置），不是网关能力；能用 A 或 C 就不要选 B。
 
-   判据是纯函数式的：`Location` 去掉服务前缀后与本次转发给后端的路径完全相同 —— 不可能前进。
-   一次性自跳（302 到同一路径 + 种 Cookie）不受影响，因为它不会连续命中。
+⚠️ `strip` + 后端自带 base path 是死局：网关把 `/openlist` 剥成 `/`，后端又把 `/` 302 回 `/openlist`。
+网关第一次只记 `redirect_loop` 诊断并放行，60 秒内第二次判定确定性死循环 → **508** 并附修复建议。
+判据是纯函数式的：`Location` 去掉服务前缀后与本次转发给后端的路径完全相同。
+
+### C. 子域名模式：零改写、零后端配置（真·透明反代）
+
+访问 `http://{转发名}.{base_domain}:{端口}/`，路径就是后端根路径，**响应体一个字节都不改**：
+
+- 路由表里的 `{转发名}` 直接作为子域名生效，无需额外配置；
+- 后端 `site_url` 保持空、`base_path` 保持 `/` 即可，前端运行时拼出来的 `/assets/*`、`/api/*`
+  天然落在同一个 origin 内，不存在前缀问题；
+- 网关自己的 `/api`、`/assets` 守卫与部署前缀剥离都会**让位**给子域名路由（否则后端 API 会被网关吞成 404）。
+
+实测 openlist v4.2.10（`site_url` 为空）：`http://openlist.localhost:8088/` 首页 → 302 `@login`，
+0 个 4xx、0 个 JS 错误。**这类在运行时按 `location` 拼绝对路径的 SPA，用 C 才是「不碰后端」的唯一正解。**
 
 ## 5. 已知限制（代理层不承诺解决）
 
-1. **JS 运行时拼接的根路径**：`fetch('/api')`、`import('/chunk.js')`、模板字符串拼 URL —— 不改写。
-2. **SPA 未配置 `basename`/`base`**：运行时路由（history.pushState + 直接刷新深层链接）可能跳出前缀，需要应用层配置。
+1. **运行期拼出来的绝对 URL 再交给 `import()` / `<script src>` 硬编码**：shim 能兜住请求类
+   （fetch/XHR/beacon/WS）与 DOM 属性赋值，但兜不住「先在 JS 里把绝对字符串拼好，再交给模块加载器」
+   的场景（openlist 的 Vite preload 列表就是这种）—— 这类请用 §4.1 的 C 方案。
+2. **SPA 的路由 basename**：`<base>` + shim 的 `pushState` 补丁能覆盖多数情况，应用仍建议显式配 basename。
 3. **硬编码自身 `IP:端口` 的后端**：响应体里的绝对地址不改写（只改 `Location` 头中指向后端的绝对 URL）。
 4. **带 bug 的后端**：异常重定向、非法 Cookie、路径混乱 —— 代理只做隔离、记录、降级。
 5. **浏览器已跳出 `/{服务名}/` 后的请求归属**：不推断，直接 404（NFR-5 不猜测）。
@@ -189,8 +206,9 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 |---|---|---|---|
 | Go / Node 普通 Web（模板渲染） | `strip` | `html_rewrite: true` | — |
 | 静态站 / 纯 HTML | `strip` | `html_rewrite: true` | — |
+| 常规 SPA（Vue/React 打包，URL 以字面量出现） | `strip` | `html_rewrite: true` | — |
+| 运行时按 `location` 拼绝对路径的 SPA（openlist/alist） | **子域名** | 全关（零改写） | — |
 | Java（自带 context-path） | `pass-through` | `html_rewrite: false` | — |
-| SPA（未配 basename） | `strip` | `html_rewrite: true` | `no_full_compat: true` |
 | 老旧系统（重定向/ Cookie 有 bug） | `isolated` | 全关 | `no_full_compat: true` |
 | WebSocket / SSE 服务 | 任意 | 按需 | 已透传 Upgrade 与 Flush |
 
