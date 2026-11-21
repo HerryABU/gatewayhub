@@ -206,3 +206,29 @@ func portOf(rawURL string) string {
 	i := strings.LastIndex(rawURL, ":")
 	return rawURL[i+1:]
 }
+
+func TestSanitizeRest(t *testing.T) {
+	cases := []struct {
+		path   string
+		prefix string
+		want   string
+	}{
+		{"/go-nvs", "go-nvs", "/"},
+		{"/go-nvs/", "go-nvs", "/"},
+		{"/go-nvs/foo", "go-nvs", "/foo"},
+		{"/go-nvs/foo/", "go-nvs", "/foo/"},
+		{"/go-nvs/foo/bar", "go-nvs", "/foo/bar"},
+		// 路径穿透防护
+		{"/go-nvs/../../etc/passwd", "go-nvs", "/etc/passwd"},
+		{"/go-nvs/../secret", "go-nvs", "/secret"},
+		{"/go-nvs/foo/../../../x", "go-nvs", "/x"},
+		{"/go-nvs/foo/./bar", "go-nvs", "/foo/bar"},
+		// 前缀必须是完整段
+		{"/go-nvsX/foo", "go-nvs", "/"},
+	}
+	for _, c := range cases {
+		if got := sanitizeRest(c.path, c.prefix); got != c.want {
+			t.Errorf("sanitizeRest(%q,%q) = %q, want %q", c.path, c.prefix, got, c.want)
+		}
+	}
+}

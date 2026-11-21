@@ -1,4 +1,4 @@
-package proxy
+package rewrite
 
 import (
 	"bytes"
@@ -21,18 +21,18 @@ func TestRewritePath(t *testing.T) {
 		{"app", "", "/", "/app/"},
 		{"app", "/", "/styles.css", "/app/styles.css"},
 		{"app", "", "/api/login", "/app/api/login"},
-		{"app", "", "//cdn.x.com/a.js", "//cdn.x.com/a.js"},       // 协议相对不动
-		{"app", "", "https://x.com/a.js", "https://x.com/a.js"},  // 绝对不动
-		{"app", "", "relative.js", "relative.js"},                 // 相对不动
-		{"app", "", "/app/api/x", "/app/api/x"},                   // 已带前缀不重复
+		{"app", "", "//cdn.x.com/a.js", "//cdn.x.com/a.js"},     // 协议相对不动
+		{"app", "", "https://x.com/a.js", "https://x.com/a.js"}, // 绝对不动
+		{"app", "", "relative.js", "relative.js"},               // 相对不动
+		{"app", "", "/app/api/x", "/app/api/x"},                 // 已带前缀不重复
 		// 子路径后端
 		{"app", "/api/v1", "/api/v1/user", "/app/user"},
 		{"app", "/api/v1", "/api/v1", "/app"},
-		{"app", "/api/v1", "/other", "/app/other"},         // 非 root 的根路径同样加前缀（避免 404）
+		{"app", "/api/v1", "/other", "/app/other"},             // 非 root 的根路径同样加前缀（避免 404）
 		{"app", "/api/v1", "/assets/x.js", "/app/assets/x.js"}, // 站点根资源也加前缀（修复 bug）
 	}
 	for _, c := range cases {
-		rw := newRewriter(c.prefix, c.root, "")
+		rw := New(c.prefix, c.root, "")
 		if got := rw.rewritePath(c.in); got != c.want {
 			t.Errorf("rewritePath(%q,%q,%q) = %q, want %q", c.prefix, c.root, c.in, got, c.want)
 		}
@@ -59,7 +59,7 @@ func TestRewriteRelative(t *testing.T) {
 		{"app", "/api/v1", "/assets/x.js", "./assets/x.js"}, // 站点根资源相对化（修复 root 下 404）
 	}
 	for _, c := range cases {
-		rw := newRewriter(c.prefix, c.root, "")
+		rw := New(c.prefix, c.root, "")
 		if got := rw.rewriteRelative(c.in); got != c.want {
 			t.Errorf("rewriteRelative(%q,%q,%q) = %q, want %q", c.prefix, c.root, c.in, got, c.want)
 		}
@@ -79,7 +79,7 @@ func TestRelativeToFile(t *testing.T) {
 		{"/app/a/b/c.css", "/api/x", "../../api/x"},
 	}
 	for _, c := range cases {
-		rw := newRewriter("app", "", "")
+		rw := New("app", "", "")
 		if got := rw.relativeToFile(c.raw, c.cssPath); got != c.want {
 			t.Errorf("relativeToFile(%q, %q) = %q, want %q", c.raw, c.cssPath, got, c.want)
 		}
@@ -87,7 +87,7 @@ func TestRelativeToFile(t *testing.T) {
 }
 
 func TestRewriteHTML(t *testing.T) {
-	rw := newRewriter("app", "", "")
+	rw := New("app", "", "")
 	in := `<html><head>
 <link rel="stylesheet" href="/assets/style.css">
 <script src="/assets/main.js"></script>
@@ -126,7 +126,7 @@ func TestRewriteHTML(t *testing.T) {
 }
 
 func TestRewriteCSS(t *testing.T) {
-	rw := newRewriter("app", "", "")
+	rw := New("app", "", "")
 	out := string(rw.rewriteCSS([]byte(`body{background:url(/bg.png)} .a{background-image:url("/x/y.png")} @import "/theme.css"; @import url("/other.css");`)))
 	if !contains(out, `url(./bg.png)`) {
 		t.Errorf("CSS 未相对化: %s", out)
@@ -143,7 +143,7 @@ func TestRewriteCSS(t *testing.T) {
 }
 
 func TestRewriteCSSFile(t *testing.T) {
-	rw := newRewriter("app", "", "")
+	rw := New("app", "", "")
 	out := string(rw.rewriteCSSFile([]byte(`body{background:url(/bg.png)} @import "/theme.css";`), "/app/assets/index.css"))
 	if !contains(out, `url(../bg.png)`) {
 		t.Errorf("外链 CSS 未相对文件位置: %s", out)
@@ -162,45 +162,19 @@ func contains(s, sub string) bool {
 	return false
 }
 
-func TestSanitizeRest(t *testing.T) {
-	cases := []struct {
-		path   string
-		prefix string
-		want   string
-	}{
-		{"/go-nvs", "go-nvs", "/"},
-		{"/go-nvs/", "go-nvs", "/"},
-		{"/go-nvs/foo", "go-nvs", "/foo"},
-		{"/go-nvs/foo/", "go-nvs", "/foo/"},
-		{"/go-nvs/foo/bar", "go-nvs", "/foo/bar"},
-		// 路径穿透防护
-		{"/go-nvs/../../etc/passwd", "go-nvs", "/etc/passwd"},
-		{"/go-nvs/../secret", "go-nvs", "/secret"},
-		{"/go-nvs/foo/../../../x", "go-nvs", "/x"},
-		{"/go-nvs/foo/./bar", "go-nvs", "/foo/bar"},
-		// 前缀必须是完整段
-		{"/go-nvsX/foo", "go-nvs", "/"},
-	}
-	for _, c := range cases {
-		if got := sanitizeRest(c.path, c.prefix); got != c.want {
-			t.Errorf("sanitizeRest(%q,%q) = %q, want %q", c.path, c.prefix, got, c.want)
-		}
-	}
-}
-
 func TestRewriteJS(t *testing.T) {
-	rw := newRewriter("app", "", "")
+	rw := New("app", "", "")
 	in := `fetch("/api/site-info");axios.get('/api/categories');import("/assets/chunk.js");const base="/api";api.get('/setup/env-check');api.get("/auth/me");const x="/";window.location.href='/login';location.assign("/register");`
 	out := string(rw.rewriteJS([]byte(in)))
 	checks := []string{
-		`"./api/site-info"`,           // fetch API 路径相对化（document base）
-		`'./api/categories'`,          // axios API 路径相对化
-		`"/app/assets/chunk.js"`,      // 动态 import 资源保留前缀绝对（module 基准）
-		`const base="./api"`,          // baseURL 相对化
-		`api.get('/setup/env-check')`, // 相对端点不改写（避免双重前缀）
-		`api.get("/auth/me")`,         // 相对端点不改写
-		`const x="/"`,                 // 单个 / 不重写
-		`location.href='/app/login'`,  // 整页导航保留前缀绝对
+		`"./api/site-info"`,                // fetch API 路径相对化（document base）
+		`'./api/categories'`,               // axios API 路径相对化
+		`"/app/assets/chunk.js"`,           // 动态 import 资源保留前缀绝对（module 基准）
+		`const base="./api"`,               // baseURL 相对化
+		`api.get('/setup/env-check')`,      // 相对端点不改写（避免双重前缀）
+		`api.get("/auth/me")`,              // 相对端点不改写
+		`const x="/"`,                      // 单个 / 不重写
+		`location.href='/app/login'`,       // 整页导航保留前缀绝对
 		`location.assign("/app/register")`, // assign 保留前缀绝对
 	}
 	for _, c := range checks {
@@ -284,7 +258,7 @@ func TestNeedsRewrite(t *testing.T) {
 }
 
 func TestRewriteJSResources(t *testing.T) {
-	rw := newRewriter("app", "", "")
+	rw := New("app", "", "")
 	in := `const img="/static/logo.png";const up="/uploads/a.jpg";const ico="/favicon.ico";const font="/fonts/f.woff2";`
 	out := string(rw.rewriteJS([]byte(in)))
 	checks := []string{
@@ -303,7 +277,7 @@ func TestRewriteJSResources(t *testing.T) {
 // TestRewriteJSMidFileImport 验证「动态 import 位于大文件中部」也能被重写，
 // 回归修复：曾因 Peek 64KB 预检漏判导致 SPA 路由懒加载 chunk 404。
 func TestRewriteJSMidFileImport(t *testing.T) {
-	rw := newRewriter("app", "", "")
+	rw := New("app", "", "")
 	// 前 80KB 为无路径的 runtime 代码，动态 import 声明在 80KB 之后（文件中部）
 	var sb strings.Builder
 	sb.WriteString(`const runtime="` + strings.Repeat("x", 80*1024) + `";`)
@@ -326,7 +300,7 @@ func TestRewriteJSMidFileImport(t *testing.T) {
 }
 
 func TestInjectBase(t *testing.T) {
-	rw := newRewriter("app", "", "")
+	rw := New("app", "", "")
 
 	// 无 <base>：注入
 	in := `<html><head><title>x</title></head><body></body></html>`
@@ -343,7 +317,7 @@ func TestInjectBase(t *testing.T) {
 	}
 
 	// 带子路径后端：同样注入（相对路径统一依赖 base）
-	rw2 := newRewriter("app", "/api/v1", "")
+	rw2 := New("app", "/api/v1", "")
 	if out3 := rw2.injectBase(in); !contains(out3, `<base href="/app/">`) {
 		t.Errorf("带子路径后端也应注入 <base>:\n%s", out3)
 	}
@@ -368,8 +342,8 @@ func TestModify(t *testing.T) {
 		Header: http.Header{"Content-Type": []string{"text/html; charset=utf-8"}},
 		Body:   io.NopCloser(bytes.NewReader(body)),
 	}
-	rw := newRewriter("app", "", "127.0.0.1:8080")
-	if err := rw.modify(resp); err != nil {
+	rw := New("app", "", "127.0.0.1:8080")
+	if err := rw.Modify(resp); err != nil {
 		t.Fatal(err)
 	}
 	out, _ := io.ReadAll(resp.Body)
@@ -391,7 +365,7 @@ func TestModify(t *testing.T) {
 		},
 		Body: io.NopCloser(bytes.NewReader(gzipBytes(t, body))),
 	}
-	if err := rw.modify(resp2); err != nil {
+	if err := rw.Modify(resp2); err != nil {
 		t.Fatal(err)
 	}
 	gr, err := gzip.NewReader(resp2.Body)
@@ -414,7 +388,7 @@ func TestModify(t *testing.T) {
 		},
 		Body: io.NopCloser(bytes.NewReader([]byte(`{}`))),
 	}
-	_ = rw.modify(resp3)
+	_ = rw.Modify(resp3)
 	if got := resp3.Header.Get("Location"); got != "/app/login" {
 		t.Errorf("Location 根相对未重写: %s", got)
 	}
@@ -423,7 +397,7 @@ func TestModify(t *testing.T) {
 		Header: http.Header{"Location": []string{"http://127.0.0.1:8080/foo"}},
 		Body:   io.NopCloser(bytes.NewReader([]byte(`{}`))),
 	}
-	_ = rw.modify(resp4)
+	_ = rw.Modify(resp4)
 	if got := resp4.Header.Get("Location"); got != "/app/foo" {
 		t.Errorf("Location 绝对(后端自身)未重写: %s", got)
 	}
@@ -431,11 +405,11 @@ func TestModify(t *testing.T) {
 	// 4) 外链 CSS 按「CSS 文件位置」相对化（网关侧路径经 context 透传）
 	cssBody := []byte(`body{background:url(/bg.png)}`)
 	resp5 := &http.Response{
-		Header: http.Header{"Content-Type": []string{"text/css"}},
-		Body:   io.NopCloser(bytes.NewReader(cssBody)),
+		Header:  http.Header{"Content-Type": []string{"text/css"}},
+		Body:    io.NopCloser(bytes.NewReader(cssBody)),
 		Request: mustReqWithGWPath("/app/assets/index.css"),
 	}
-	if err := rw.modify(resp5); err != nil {
+	if err := rw.Modify(resp5); err != nil {
 		t.Fatal(err)
 	}
 	cssOut, _ := io.ReadAll(resp5.Body)
@@ -446,5 +420,5 @@ func TestModify(t *testing.T) {
 
 func mustReqWithGWPath(p string) *http.Request {
 	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:8080/"+p, nil)
-	return withGWPath(req, p)
+	return WithGWPath(req, p)
 }
