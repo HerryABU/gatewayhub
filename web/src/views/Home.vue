@@ -36,7 +36,7 @@
         <i class="grid-lines"></i>
       </div>
       <div class="hero-inner">
-        <div class="hero-eyebrow">{{ t('app.version') }} · {{ t('app.subtitle') }}</div>
+        <div class="hero-eyebrow">{{ appVersion }} · {{ t('app.subtitle') }}</div>
         <h1 class="hero-title">{{ siteName }}</h1>
         <p v-if="intro" class="hero-intro">{{ intro }}</p>
         <p v-else class="hero-intro gh-dim">{{ t('home.heroDefault') }}</p>
@@ -149,7 +149,7 @@
       <footer class="page-foot">
         <span>© {{ year }} {{ siteName }}</span>
         <span>·</span>
-        <span>{{ t('app.version') }}</span>
+        <span>{{ appVersion }}</span>
       </footer>
     </main>
 
@@ -175,6 +175,9 @@ const loading = ref(false)
 const showLogin = ref(false)
 const siteName = ref('GatewayHub')
 const intro = ref('')
+// 版本号以服务端 /api/settings 为准，i18n 里的值只作首帧兜底：
+// 前端产物是打进 exe 的，写死版本必然与后端脱节（曾出现页面 v1.5.0、接口 1.6.1）。
+const appVersion = ref(t('app.version'))
 let timer = null
 
 const locales = SUPPORTED_LOCALES
@@ -209,6 +212,7 @@ async function loadSite() {
     if (res.code === 0) {
       if (res.data.site_name) siteName.value = res.data.site_name
       intro.value = res.data.site_intro || ''
+      if (res.data.version) appVersion.value = 'v' + res.data.version
     }
   } catch (e) {}
 }

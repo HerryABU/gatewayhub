@@ -2,7 +2,7 @@ export default {
   app: {
     name: 'GatewayHub',
     subtitle: 'Unified Access Gateway',
-    version: 'v1.5.0'
+    version: ''
   },
   common: {
     login: 'Admin Login',
