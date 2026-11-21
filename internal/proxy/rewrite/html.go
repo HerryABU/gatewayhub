@@ -100,6 +100,11 @@ func (rw *Rewriter) rewriteHTML(b []byte) []byte {
 		return sub[1] + string(rw.rewriteJS([]byte(sub[2]))) + sub[3]
 	})
 
+	// 4.6) 运行期挂载点声明（base_path / basename / baseURL = "/"）：改写为网关前缀。
+	//     SPA 的路由 basename、axios baseURL、运行时资源前缀都从这里取值，
+	//     不改这一处，前两者会在浏览器端拼出根路径（实测 openlist：白屏 + 全部 API 404）。
+	s, _ = rw.rewriteBasePathConfig(s)
+
 	// 5) 注入 <base>，让前端路由器（Vue Router createWebHistory 等）与文档相对路径以 /prefix/ 为基址。
 	//    无论后端是否位于子路径（root）都注入——相对路径解析统一依赖它。
 	s = rw.injectBase(s)

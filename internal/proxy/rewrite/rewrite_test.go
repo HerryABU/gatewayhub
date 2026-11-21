@@ -442,7 +442,7 @@ func TestPrefixShim(t *testing.T) {
 	if strings.Index(out, "data-gateway-prefix-shim") > strings.Index(out, `type="module"`) {
 		t.Errorf("shim 必须在应用脚本之前:\n%s", out)
 	}
-	for _, hook := range []string{"window.fetch", "XMLHttpRequest.prototype.open", "navigator.sendBeacon", "history.pushState", "Element.prototype.setAttribute", "HTMLScriptElement"} {
+	for _, hook := range []string{"window.fetch", "XMLHttpRequest.prototype.open", "navigator.sendBeacon", "history.pushState", "Element.prototype.setAttribute", "HTMLScriptElement", "__dynamic_base__"} {
 		if !contains(out, hook) {
 			t.Errorf("shim 缺少钩子 %q", hook)
 		}
@@ -455,5 +455,73 @@ func TestPrefixShim(t *testing.T) {
 	empty := string(New("", "", "").rewriteHTML([]byte(html)))
 	if contains(empty, "data-gateway-prefix-shim") {
 		t.Errorf("空前缀不应注入 shim:/n%s", empty)
+	}
+}
+
+// TestRewriteBasePathConfig 校验「运行期挂载点声明」改写：
+// 只改值为 "/" 的声明（SPA 说自己挂在站点根 → 改成网关前缀），带内容的值一律不动。
+func TestRewriteBasePathConfig(t *testing.T) {
+	rw := New("openlist", "", "")
+
+	cases := []struct{ in, want string }{
+		// openlist / alist：单引号、对象字面量
+		{`base_path: '/',`, `base_path: '/openlist',`},
+		// 压缩后的 JSON 风格：双引号 + 无空格
+		{`{"base_path":"/"}`, `{"base_path":"/openlist"}`},
+		{`{ "basePath" : "/" }`, `{ "basePath" : "/openlist" }`},
+		{`basename: "/"`, `basename: "/openlist"`},
+		{`baseURL: '/'`, `baseURL: '/openlist'`},
+		{`publicPath: "/"`, `publicPath: "/openlist"`},
+		// 已带内容 / 非根：不动
+		{`base_path: '/app'`, `base_path: '/app'`},
+		{`basename: "//cdn"`, `basename: "//cdn"`},
+		{`base_path: '/openlist'`, `base_path: '/openlist'`},
+		// 业务字段同名但不是挂载点（值不是 "/"）
+		{`path: '/'`, `path: '/'`},
+	}
+	for _, c := range cases {
+		got, _ := rw.rewriteBasePathConfig(c.in)
+		if got != c.want {
+			t.Errorf("rewriteBasePathConfig(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+
+	// 命中计数：只算真正改写的键
+	if _, n := rw.rewriteBasePathConfig(`base_path:'/';basename:'/';path:'/'`); n != 2 {
+		t.Errorf("命中计数 = %d, want 2", n)
+	}
+	// 空前缀不改
+	if got, _ := New("", "", "").rewriteBasePathConfig(`base_path: '/'`); got != `base_path: '/'` {
+		t.Errorf("空前缀不应改写: %q", got)
+	}
+}
+
+// TestPrepareHTML 校验挂载准备整体：挂载点改写 + shim 注入，且幂等。
+func TestPrepareHTML(t *testing.T) {
+	html := `<!doctype html><html><head><script>
+window.APP = { base_path: '/', cdn: '' }
+</script></head><body><div id="root"></div></body></html>`
+	out, n := PrepareHTML("openlist", []byte(html))
+	if n == 0 {
+		t.Fatal("应至少命中挂载点改写")
+	}
+	s := string(out)
+	if !contains(s, `base_path: '/openlist'`) {
+		t.Errorf("挂载点未改写:\n%s", s)
+	}
+	if strings.Count(s, "data-gateway-prefix-shim") != 1 {
+		t.Errorf("shim 应注入一次:\n%s", s)
+	}
+	// 幂等：同一份产物再过一遍不应叠加
+	again, n2 := PrepareHTML("openlist", out)
+	if n2 != 0 || string(again) == "" {
+		t.Errorf("二次处理应无命中且原样返回，n=%d", n2)
+	}
+	if strings.Count(string(again), "data-gateway-prefix-shim") != 1 {
+		t.Errorf("shim 重复注入:\n%s", string(again))
+	}
+	// 空前缀：原样
+	if b, n := PrepareHTML("", []byte(html)); n != 0 || string(b) != html {
+		t.Errorf("空前缀应原样返回")
 	}
 }

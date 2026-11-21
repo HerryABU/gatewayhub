@@ -94,6 +94,19 @@ const prefixShimTemplate = `(function(){
     hook(window.HTMLIFrameElement&&HTMLIFrameElement.prototype,"src");
     hook(window.HTMLMediaElement&&HTMLMediaElement.prototype,"src");
   }catch(e){}
+  // 资源基准变量（vite-plugin-dynamic-base 约定，openlist/alist 等在用）：
+  // 应用只在配了 CDN 时才写它，留空时 preload 助手退化成 "base/assets/x" → 站点根 /assets。
+  // 这里做「空值兜底」：应用留空 → 返回网关前缀；应用写了真实 CDN → 原样返回，CDN 语义不变。
+  try{
+    var rawBase="";
+    var bd=Object.getOwnPropertyDescriptor(window,"__dynamic_base__");
+    if(bd&&typeof bd.value==="string")rawBase=bd.value;
+    Object.defineProperty(window,"__dynamic_base__",{
+      configurable:true,
+      get:function(){return rawBase||P;},
+      set:function(v){rawBase=(typeof v==="string"?v:"");}
+    });
+  }catch(e){}
 })();`
 
 // shimScriptRe 用于判断页面里是否已经注入过（例如后端自己在 <head> 里回显了上游 HTML）。
