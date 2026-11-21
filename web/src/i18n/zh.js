@@ -2,7 +2,7 @@ export default {
   app: {
     name: 'GatewayHub',
     subtitle: '统一接入网关',
-    version: 'v1.4.0'
+    version: 'v1.5.0'
   },
   common: {
     login: '管理员登录',
