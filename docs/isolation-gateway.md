@@ -135,38 +135,49 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 
 ### A. 路径前缀模式（默认推荐）：`strip` + `html_rewrite: true`
 
-适用于「URL 以字符串字面量出现在 HTML/JS 里」的常规应用（Vue/React 打包产物、模板渲染站）。
-网关做两件事：
+网关在**转发的那一份 HTML** 上做四层准备，后端文件与配置一个字节都不动
+（等价于 nginx `sub_filter` / Apache `mod_proxy_html`，但只认挂载点声明，不做全文替换）：
 
-1. **静态改写**：HTML 属性、内联样式、外链 CSS 的根绝对路径改为相对/带前缀形式，
-   并注入 `<base href="/{服务名}/">`；
-2. **运行期兜底（前缀 shim）**：在 `<head>` 最前面注入一段脚本，给真正**发出去的请求**补前缀 ——
+1. **静态改写**：HTML 的 `href/src/action` 与 CSS 的 `url()` 补前缀；`data-src` 这类
+   「延迟地址」故意不改（它会被前端再拼一次基准，见第 3 点）。
+2. **挂载点声明改写**：把内联运行期配置里值为 `"/"` 的挂载点改成 `/{服务名}` ——
+   匹配 `base_path` / `basePath` / `basename` / `baseURL` / `publicPath` / `asset_prefix` / `router_base`，
+   `key: "/"` 与 `"key":"/"` 都认。SPA 的路由 basename、axios baseURL、运行时资源前缀都从这里取值，
+   这是「一个后端不知道自己被挂在子路径」时最根本的一处。
+3. **资源基准兜底**：`vite-plugin-dynamic-base` 约定（openlist / alist 等在用）把 chunk 地址拼成
+   `` `${window.__dynamic_base__}/` + "assets/x.js" ``，而该变量只在配了 CDN 时才非空。
+   网关用 getter 做**空值兜底**：应用留空 → 返回网关前缀；应用写了真实 CDN → 原样返回，CDN 语义不变。
+4. **运行期请求 shim**：`<head>` 最前面注入脚本，给真正**发出去的请求**补前缀 ——
    `fetch`、`XMLHttpRequest`（axios 走它）、`sendBeacon`、`EventSource`、`WebSocket`、
-   `history.pushState/replaceState`，以及 DOM 上的 `src`/`href`（`setAttribute` 与属性 setter 两条路）。
+   `history.pushState/replaceState`，以及 DOM 的 `src`/`href`（`setAttribute` + 属性 setter）。
 
-为什么必须分成两层：**JS 里以 `/` 开头的字符串既可能是 URL，也可能是请求体数据**。
+为什么必须分层：**JS 里以 `/` 开头的字符串既可能是 URL，也可能是请求体数据**。
 实测 NVS（`/api/batch` 的请求体是 `{id,method,path}`，`path` 值形如 `/api/nav-layout`）——
 早期实现把这类字面量也改写成 `./api/nav-layout`，后端直接回 `path 必须以 /api/ 开头`，
-11 个子请求全失败，顶部导航整条消失。所以现在**静态层只改资源类字面量**（`/assets`、`/static`…），
+11 个子请求全失败，顶部导航整条消失。所以**静态层只改资源类字面量与挂载点声明**，
 **API 前缀一律交给 shim 在请求发出时补**：只碰请求，不碰数据。
 
-隔离引擎（`strip` + `html_rewrite`）与数据库路径路由（`/前缀/*`）用的是同一套 shim，行为一致。
+隔离引擎（`strip` + `html_rewrite`）与数据库路径路由（`/前缀/*`）用的是同一套准备逻辑，行为一致。
+
+实测 openlist v4.2.10（`site_url` 保持空、后端零配置）：`http://127.0.0.1:8088/openlist/`
+首页 302 到 `/openlist/@login`，登录页 6 个 `/openlist/api/public/*` 全 200，
+表单提交打 `/openlist/api/auth/login/hash` 拿到业务错误文案，**0 个 4xx、0 个 JS 错误**；
+动态 chunk（`store-*.js`、`zh-CN-*.js`、`entry-*.js`）全部命中 `/openlist/assets/*`。
 
 ### B. 后端自认前缀：`pass-through`
 
-适合本来就有「站点子路径」配置项的应用（如 openlist 的 `site_url`、Java 的 `context-path`）。
-后端把 `base_path` 配成 `/{服务名}`，网关原样透传前缀、不改响应体：
+适合本来就有「站点子路径」配置项的应用（如 Java 的 `context-path`）：后端自己输出带前缀的地址，
+网关原样透传前缀、不改响应体，代价是**要改后端配置**：
 
 ```yaml
 services:
-  - name: openlist
-    target: 127.0.0.1:5244
+  - name: java-app
+    target: 127.0.0.1:8080
     mode: pass-through
-    cookie_hat: "openlist__"
-    known_abs_prefixes: ["/assets", "/api"]   # 仅用于越界归因告警
+    cookie_hat: "javaapp__"
 ```
 
-注意这是**应用侧声明**（改的是后端配置），不是网关能力；能用 A 或 C 就不要选 B。
+注意这是**应用侧声明**，不是网关能力；能用 A 或 C 就不要选 B（A 不需要动后端）。
 
 ⚠️ `strip` + 后端自带 base path 是死局：网关把 `/openlist` 剥成 `/`，后端又把 `/` 302 回 `/openlist`。
 网关第一次只记 `redirect_loop` 诊断并放行，60 秒内第二次判定确定性死循环 → **508** 并附修复建议。
@@ -182,14 +193,23 @@ services:
 - 网关自己的 `/api`、`/assets` 守卫与部署前缀剥离都会**让位**给子域名路由（否则后端 API 会被网关吞成 404）。
 
 实测 openlist v4.2.10（`site_url` 为空）：`http://openlist.localhost:8088/` 首页 → 302 `@login`，
-0 个 4xx、0 个 JS 错误。**这类在运行时按 `location` 拼绝对路径的 SPA，用 C 才是「不碰后端」的唯一正解。**
+0 个 4xx、0 个 JS 错误。A 与 C 都能做到「不碰后端」，差别在于：
+
+- **A**：同一个域名、同一端口，多个服务共用一个 origin（适合「一个入口挂多个系统」）；
+- **C**：每个服务独占一个子域名，响应体零改写（速度=源站，排障最简单），需要 DNS/泛解析或 `*.localhost`。
 
 ## 5. 已知限制（代理层不承诺解决）
 
-1. **运行期拼出来的绝对 URL 再交给 `import()` / `<script src>` 硬编码**：shim 能兜住请求类
-   （fetch/XHR/beacon/WS）与 DOM 属性赋值，但兜不住「先在 JS 里把绝对字符串拼好，再交给模块加载器」
-   的场景（openlist 的 Vite preload 列表就是这种）—— 这类请用 §4.1 的 C 方案。
-2. **SPA 的路由 basename**：`<base>` + shim 的 `pushState` 补丁能覆盖多数情况，应用仍建议显式配 basename。
+1. **构建期硬编码的绝对基址**：打包产物里如果直接把 `base: "/cdn-x/"`（或 `import "/cdn-x/a.js"`）
+   编译进模块图，且应用没有读取任何运行期挂载点配置，那么网关无从得知该改哪个值 ——
+   这种情况只能改构建配置，或用 §4.1 的 C 方案（子域名下根路径即本服务的根）。
+   常见框架的**运行期**挂载点（`base_path`/`basename`/`baseURL`/`publicPath`/`__dynamic_base__`）
+   都已覆盖，不在此限制内。
+2. **SPA 的路由 basename**：`<base>` + 挂载点声明 + shim 的 `pushState` 补丁能覆盖多数情况；
+   应用若把 basename 硬编码在路由表里，请改用运行期配置读取。
+3. **硬编码自身 `IP:端口` 的后端**：响应体里的绝对地址不改写（只改 `Location` 头中指向后端的绝对 URL）。
+4. **带 bug 的后端**：异常重定向、非法 Cookie、路径混乱 —— 代理只做隔离、记录、降级。
+5. **浏览器已跳出 `/{服务名}/` 后的请求归属**：不推断，直接 404（NFR-5 不猜测）。
 3. **硬编码自身 `IP:端口` 的后端**：响应体里的绝对地址不改写（只改 `Location` 头中指向后端的绝对 URL）。
 4. **带 bug 的后端**：异常重定向、非法 Cookie、路径混乱 —— 代理只做隔离、记录、降级。
 5. **浏览器已跳出 `/{服务名}/` 后的请求归属**：不推断，直接 404（NFR-5 不猜测）。

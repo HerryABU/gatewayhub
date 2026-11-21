@@ -78,21 +78,20 @@ services: []
 #     cookie_hat: "B__"
 #     no_full_compat: true
 #
-#   # 3) SPA（未配置 basename）：先按 strip + HTML 改写跑，出问题一键降级 isolated
+#   # 3) SPA（未配置 basename）：strip + HTML 改写即可，无需改应用
 #   - name: SPA
 #     target: 10.0.0.13:3000
 #     mode: strip
 #     cookie_hat: "SPA__"
-#     html_rewrite: true
-#     no_full_compat: true   # 运行时 fetch('/api') / import('/chunk.js') 代理层不承诺改写
+#     html_rewrite: true     # 静态字面量 + 运行期挂载点 + 请求 shim（三层都在这里开关）
 #
-#   # 4) openlist / alist 这类「前端在运行时按 location 拼绝对路径」的 SPA（实测 v4.2.10）
-#   #    最省事的真·反代是**子域名模式**：openlist.localhost:8088（零改写、后端零配置）。
-#   #    若必须走 /openlist/ 路径：只能让后端自己认前缀（data/config.json 的 site_url
-#   #    配成 http://<代理域名>/openlist）并用 pass-through；strip + 后端自带 base path
-#   #    会形成 /openlist ⇄ / 的死循环（网关第 2 次命中直接回 508）。
+#   # 4) openlist / alist（实测 v4.2.10）：同样用 strip + html_rewrite，
+#   #    后端 site_url 保持空、零配置。网关会改写它内联的 OPENLIST_CONFIG.base_path，
+#   #    并在 __dynamic_base__ 留空时兜底为 /openlist，chunk 与接口都落在前缀内。
+#   #    （不想让代理改任何字节时，可用子域名模式 openlist.localhost:8088。）
 #   - name: openlist
 #     target: 127.0.0.1:5244
-#     mode: pass-through
+#     mode: strip
 #     cookie_hat: "openlist__"
+#     html_rewrite: true
 #     known_abs_prefixes: ["/assets", "/api"]   # 仅用于越界归因告警，不参与路由
