@@ -123,11 +123,23 @@ func (m *Manager) rebuildMultiLocked() {
 
 // Matchable 判断请求是否命中任何路由（子域名或路径），供 NoRoute 决定转发 or SPA 回退。
 func (m *Manager) Matchable(path, host string) bool {
-	if prefix, ok := m.matchSubdomain(host); ok {
-		if e, ok := m.Get(prefix); ok && e.Route.Status == models.StatusActive {
-			return true
-		}
+	if m.MatchableHost(host) {
+		return true
 	}
 	_, _, ok := m.matchPath(path)
 	return ok
+}
+
+// MatchableHost 判断 Host 是否指向一个启用的子域名路由。
+//
+// 子域名模式下「路径就是后端根路径」，后端自己的 /api、/assets 与网关同名路径天然重叠，
+// 所以 NoRoute 必须在网关自身的 /api 守卫与 SPA 静态资源之前先做这个判断，
+// 否则后端 API 会被网关吞成 404（实测 openlist 子域名模式 5 个 /api/public/* 全 404）。
+func (m *Manager) MatchableHost(host string) bool {
+	prefix, ok := m.matchSubdomain(host)
+	if !ok {
+		return false
+	}
+	e, ok := m.Get(prefix)
+	return ok && e.Route.Status == models.StatusActive
 }

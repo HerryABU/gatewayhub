@@ -108,6 +108,13 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 		if h.Iso != nil && h.Iso.Active() && !h.Iso.Matches(path) {
 			h.Iso.AttributeUnmatched(path)
 		}
+		// 子域名路由优先：Host 已经声明归属某个后端，路径就是后端根路径。
+		// 此时网关自己的 /api 守卫、静态资源与 SPA 回退都必须让位（否则后端
+		// 的 /api/*、/assets/* 会被网关吞掉）。
+		if h.Proxy.MatchableHost(c.Request.Host) {
+			h.Proxy.Handle(c)
+			return
+		}
 		if strings.HasPrefix(path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": "not found"})
 			return
@@ -132,7 +139,7 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 	// 外层包装：在 Gin 路由匹配之前智能剥离「子路径部署前缀」（详见 stripDeployPrefix）
 	var engine http.Handler = r
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		if p := stripDeployPrefix(req.URL.Path, h); p != req.URL.Path {
+		if p := stripDeployPrefix(req.URL.Path, req.Host, h); p != req.URL.Path {
 			req.URL.Path = p
 			req.URL.RawPath = ""
 		}
@@ -186,7 +193,12 @@ func firstSeg(p string) (string, string) {
 //
 // 嵌套的业务路由同样受益：/{name}/java-order/login → /java-order/login → 命中业务路由。
 // 必须在 Gin 路由匹配之前执行（Gin 的中间件在路由匹配之后才运行，改路径不会重新路由）。
-func stripDeployPrefix(p string, h *handlers.Handler) string {
+func stripDeployPrefix(p, host string, h *handlers.Handler) string {
+	// 子域名模式：Host 已标定后端，路径就是后端根路径，任何一段都不能当部署前缀剥掉
+	// （如 app.localhost/users/list 剥成 /list 会直接把后端路由打歪）。
+	if h.Proxy.MatchableHost(host) {
+		return p
+	}
 	seg, rest := firstSeg(p)
 	if seg == "" || rest == "" || reservedFirstSegments[seg] {
 		return p
