@@ -21,6 +21,18 @@ import (
 //   - 所有真正发出去的请求（fetch / XHR / sendBeacon / EventSource / WebSocket）、
 //     导航（pushState / replaceState）与 DOM 上的 src/href，统一在这里补前缀。
 // 只碰请求，不碰数据。
+// 刻意不碰 __dynamic_base__（vite-plugin-dynamic-base 约定，openlist / alist 在用）：
+// 那是应用的**运行态**，不是可改写的外部配置。
+//
+// 曾经在这里做过「空值兜底」（留空就返回网关前缀），实测是错的：
+// openlist 的 index.html 用 if(window.__dynamic_base__) 判断要不要进 CDN 分支——
+// 空串时原样设置属性，非空时拼 __dynamic_base__ + item.attrs.src。
+// 而 preloads 里有一条 script 只有 data-src、没有 src，被伪造成真值后拼出
+// "/openlist" + undefined = /openlistundefined，DOM 上凭空多一个 404 脚本。
+//
+// 伪造应用内部状态＝篡改目标程序运行态，比改配置更隐蔽、更难排查。
+// 正确做法：让它保持应用自己写的值（空就是空），补前缀交给
+// 已钩住的 Element.setAttribute 与 HTMLScriptElement/Link/Image 的属性 setter。
 const prefixShimTemplate = `(function(){
   var P=__P__;
   if(!P||P==="/")return;
@@ -28,11 +40,17 @@ const prefixShimTemplate = `(function(){
   window.__GATEWAY_PREFIX__=P;
   function fix(u){
     if(typeof u!=="string"||!u)return u;
+    // 同源绝对 URL 先剥回站点内路径。
+    // vite 的 __vitePreload 用 new URL(dep, import.meta.url) 解析依赖，dep 是根相对
+    // 的 "/assets/x.css"，new URL 会把它规约成 http://gw/assets/x.css —— 已经带上
+    // origin，后面再加前缀就无从下手，请求直接落到网关根 → 全站 404。
+    // 只剥 location.origin，跨域（CDN / 图床）一律原样放行。
+    var O=location.origin;
+    if(u.indexOf(O+"/")===0)u=u.slice(O.length);
     if(u.charCodeAt(0)!==47)return u;
     if(u.charCodeAt(1)===47)return u;
-    // 两层改写叠在一起时收敛成一层：静态改写已经加过前缀、运行期基准又拼了一次
-    // （vite preload 助手是 __dynamic_base__ 加 dep，dep 在 HTML 里被静态加过前缀），
-    // 请求会落到 /prefix/prefix/assets/*。这里幂等收敛，不改变最终语义。
+    // 两层改写叠在一起时收敛成一层（静态改写已加过前缀、运行期又拼一次），
+    // 请求会落到 /prefix/prefix/assets/*。这里幂等收敛，不改最终语义。
     while(u.indexOf(P+P+"/")===0)u=u.slice(P.length);
     if(u===P||u.indexOf(PS)===0)return u;
     return P+u;
@@ -97,19 +115,6 @@ const prefixShimTemplate = `(function(){
     hook(window.HTMLSourceElement&&HTMLSourceElement.prototype,"src");
     hook(window.HTMLIFrameElement&&HTMLIFrameElement.prototype,"src");
     hook(window.HTMLMediaElement&&HTMLMediaElement.prototype,"src");
-  }catch(e){}
-  // 资源基准变量（vite-plugin-dynamic-base 约定，openlist/alist 等在用）：
-  // 应用只在配了 CDN 时才写它，留空时 preload 助手退化成 "base/assets/x" → 站点根 /assets。
-  // 这里做「空值兜底」：应用留空 → 返回网关前缀；应用写了真实 CDN → 原样返回，CDN 语义不变。
-  try{
-    var rawBase="";
-    var bd=Object.getOwnPropertyDescriptor(window,"__dynamic_base__");
-    if(bd&&typeof bd.value==="string")rawBase=bd.value;
-    Object.defineProperty(window,"__dynamic_base__",{
-      configurable:true,
-      get:function(){return rawBase||P;},
-      set:function(v){rawBase=(typeof v==="string"?v:"");}
-    });
   }catch(e){}
 })();`
 

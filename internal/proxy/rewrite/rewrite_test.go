@@ -339,10 +339,16 @@ func TestPrefixShim(t *testing.T) {
 	if strings.Index(out, "data-gateway-prefix-shim") > strings.Index(out, `type="module"`) {
 		t.Errorf("shim 必须在应用脚本之前:\n%s", out)
 	}
-	for _, hook := range []string{"window.fetch", "XMLHttpRequest.prototype.open", "navigator.sendBeacon", "history.pushState", "Element.prototype.setAttribute", "HTMLScriptElement", "__dynamic_base__"} {
+	for _, hook := range []string{"window.fetch", "XMLHttpRequest.prototype.open", "navigator.sendBeacon", "history.pushState", "Element.prototype.setAttribute", "HTMLScriptElement"} {
 		if !contains(out, hook) {
 			t.Errorf("shim 缺少钩子 %q", hook)
 		}
+	}
+	// 反向断言：绝不能伪造 __dynamic_base__。
+	// openlist 用它判断是否进 CDN 分支，空串时才会「原样设置属性」；
+	// 被伪造后会把只有 data-src 的那条 preload 拼成 /prefixundefined。
+	if contains(out, "__dynamic_base__") {
+		t.Errorf("shim 不得改写 __dynamic_base__（会篡改应用运行态）:\n%s", out)
 	}
 	// 二次注入幂等（同一个响应被重复处理不应叠两份脚本）
 	if again := string(rw.rewriteHTML([]byte(out))); strings.Count(again, "data-gateway-prefix-shim") != 1 {
