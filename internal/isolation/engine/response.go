@@ -15,6 +15,7 @@ import (
 	"gatewayhub/internal/isolation/forward"
 	"gatewayhub/internal/isolation/metrics"
 	"gatewayhub/internal/isolation/respond"
+	"gatewayhub/internal/proxy/rewrite"
 )
 
 // modifyResponse 是响应侧的「修正」：Location、Set-Cookie、可选的字面量改写
@@ -224,6 +225,14 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 		return
 	}
 	out, hits := respond.RewriteLiterals(decoded, kind, cfg.Prefix)
+	// HTML 额外注入「运行期前缀兜底」：隔离引擎的字面量改写不碰 JS 运行期路径，
+	// 否则 fetch('/api/x')、axios('/api') 会绕过前缀打到网关根路径（NVS 实测：顶部导航整条消失）。
+	if kind == respond.KindHTML {
+		if injected, ok := rewrite.InjectShim(cfg.Prefix, out); ok {
+			out = injected
+			hits++
+		}
+	}
 	if hits == 0 {
 		// 无命中：连解压结果都不使用，原样（含压缩）透传，零额外开销
 		restoreBody(resp, buf, origin)
