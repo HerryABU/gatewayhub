@@ -97,6 +97,8 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 
 > 页面只是这些接口的视图，**不承担任何网关逻辑**：所有改写、熔断、隔离行为仍在 Go 侧，关掉前端不影响代理功能。
 
+![路径隔离控制台](img/isolation-console.png)
+
 ---
 
 ## 4. 指标与告警口径
