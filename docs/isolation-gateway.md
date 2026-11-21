@@ -139,18 +139,21 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 （等价于 nginx `sub_filter` / Apache `mod_proxy_html`，但只认挂载点声明，不做全文替换）：
 
 1. **静态改写**：HTML 的 `href/src/action` 与 CSS 的 `url()` 补前缀；`data-src` 这类
-   「延迟地址」故意不改（它会被前端再拼一次基准，见第 3 点）；**JS 字面量一律不碰**
+   「延迟地址」故意不改（它会被前端再拼一次基准，见第 4 点）；**JS 字面量一律不碰**
    （只改整页导航 `location.href|assign|replace`）。原因见下面的「为什么必须分层」。
 2. **挂载点声明改写**：把内联运行期配置里值为 `"/"` 的挂载点改成 `/{服务名}` ——
    匹配 `base_path` / `basePath` / `basename` / `baseURL` / `publicPath` / `asset_prefix` / `router_base`，
    `key: "/"` 与 `"key":"/"` 都认。SPA 的路由 basename、axios baseURL、运行时资源前缀都从这里取值，
    这是「一个后端不知道自己被挂在子路径」时最根本的一处。
-3. **资源基准兜底**：`vite-plugin-dynamic-base` 约定（openlist / alist 等在用）把 chunk 地址拼成
-   `` `${window.__dynamic_base__}/` + "assets/x.js" ``，而该变量只在配了 CDN 时才非空。
-   网关用 getter 做**空值兜底**：应用留空 → 返回网关前缀；应用写了真实 CDN → 原样返回，CDN 语义不变。
+3. **资源基准一律不伪造**：`vite-plugin-dynamic-base` 的 `window.__dynamic_base__`（openlist / alist 在用）
+   属于应用运行态，网关**不碰**。曾给它做「空值兜底」并因此把 openlist 首屏打挂，详见 §5.1。
+   prefetch / modulepreload 的地址由第 4 步的属性 setter 在赋值时补前缀即可。
 4. **运行期请求 shim**：`<head>` 最前面注入脚本，给真正**发出去的请求**补前缀 ——
    `fetch`、`XMLHttpRequest`（axios 走它）、`sendBeacon`、`EventSource`、`WebSocket`、
    `history.pushState/replaceState`，以及 DOM 的 `src`/`href`（`setAttribute` + 属性 setter）。
+   入参先剥同源绝对 URL（`http://gw/assets/x.css` → `/assets/x.css`）再补前缀：vite 的
+   `__vitePreload` 用 `new URL(dep, import.meta.url)` 会把根相对 dep 规约成绝对地址，
+   不剥就会全部打到网关根。跨域 CDN / 图床原样放行。
 
 为什么必须分层：**JS 里以 `/` 开头的字符串既可能是 URL，也可能是请求体数据，文本层无法判断**。
 已经真实踩中两次：
@@ -166,10 +169,17 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 
 隔离引擎（`strip` + `html_rewrite`）与数据库路径路由（`/前缀/*`）用的是同一套准备逻辑，行为一致。
 
-实测 openlist v4.2.10（`site_url` 保持空、后端零配置）：`http://127.0.0.1:8088/openlist/`
-首页 302 到 `/openlist/@login`，登录页 6 个 `/openlist/api/public/*` 全 200，
-表单提交打 `/openlist/api/auth/login/hash` 拿到业务错误文案，**0 个 4xx、0 个 JS 错误**；
-动态 chunk（`store-*.js`、`zh-CN-*.js`、`entry-*.js`）全部命中 `/openlist/assets/*`。
+实测 openlist（`site_url` 留空、`data/config.json` 与备份 md5 完全一致）、Chromium 真机
+`http://127.0.0.1:8088/openlist/`：登录页完整渲染（标题「登录到 OpenList」、账号/密码/记住账号/
+忘记密码/清除/游客浏览全部就位），表单提交打 `/openlist/api/auth/login/hash` 并回
+`Invalid username or password` 业务文案，`styles` 全部落在 `/openlist/assets/*`，
+**0 个 4xx、0 个 pageerror**。懒加载 chunk（`entry-*.js`、`login-*.js`、`store-*.js`、`zh-CN-*.js`）
+与 preload CSS 全部命中 `/openlist/assets/*`。
+
+> 修复前这里曾是"假绿"：curl 看首页 200，真机却报 `System error: Unable to preload CSS`，
+> 30+ 个 chunk 打到 `/assets/*` 404。原因是 `__vitePreload` 用 `new URL()` 把根相对 dep
+> 规约成了同源绝对地址，而 shim 只处理以 `/` 开头的字符串。
+> **验收必须看前端，不能看状态码**。
 
 ### B. 后端自认前缀：`pass-through`
 
@@ -210,16 +220,30 @@ services:
 1. **构建期硬编码的绝对基址**：打包产物里如果直接把 `base: "/cdn-x/"`（或 `import "/cdn-x/a.js"`）
    编译进模块图，且应用没有读取任何运行期挂载点配置，那么网关无从得知该改哪个值 ——
    这种情况只能改构建配置，或用 §4.1 的 C 方案（子域名下根路径即本服务的根）。
-   常见框架的**运行期**挂载点（`base_path`/`basename`/`baseURL`/`publicPath`/`__dynamic_base__`）
-   都已覆盖，不在此限制内。
+   常见框架的**运行期**挂载点（`base_path`/`basename`/`baseURL`/`publicPath`/`asset_prefix`/`router_base`）
+   会按键名改写（只改值为 `"/"` 的声明）。`__dynamic_base__` 属于**应用运行态**，
+   一律不碰 —— 伪造它会改变应用的控制流分支（见 §5.1）。
 2. **SPA 的路由 basename**：`<base>` + 挂载点声明 + shim 的 `pushState` 补丁能覆盖多数情况；
    应用若把 basename 硬编码在路由表里，请改用运行期配置读取。
 3. **硬编码自身 `IP:端口` 的后端**：响应体里的绝对地址不改写（只改 `Location` 头中指向后端的绝对 URL）。
+   注意 shim 只剥 `location.origin` 后补前缀，跨域 CDN / 图床原样放行。
 4. **带 bug 的后端**：异常重定向、非法 Cookie、路径混乱 —— 代理只做隔离、记录、降级。
 5. **浏览器已跳出 `/{服务名}/` 后的请求归属**：不推断，直接 404（NFR-5 不猜测）。
-3. **硬编码自身 `IP:端口` 的后端**：响应体里的绝对地址不改写（只改 `Location` 头中指向后端的绝对 URL）。
-4. **带 bug 的后端**：异常重定向、非法 Cookie、路径混乱 —— 代理只做隔离、记录、降级。
-5. **浏览器已跳出 `/{服务名}/` 后的请求归属**：不推断，直接 404（NFR-5 不猜测）。
+
+### 5.1 铁律：不伪造应用运行态
+
+路径式反代允许改**响应的字节**（补前缀），但不允许改**应用的运行态**。
+两者差别在于后者会改变应用自己的控制流：
+
+> openlist 的 `index.html` 里写的是 `if (window.__dynamic_base__) { 走 CDN 分支 }`。
+> 网关曾给它做「空值兜底」（留空就返回网关前缀），于是应用误判「配了 CDN」，
+> 拼出 `__dynamic_base__ + item.attrs.src`；而 preloads 里恰好有一条 `script`
+> 只有 `data-src`、没有 `src`，结果得到 `/openlistundefined`，DOM 上凭空多一个 404 脚本。
+
+同理，**不要**去改 `window.__POWERED_BY_QIANKUN__`、`__NUXT__`、`__NEXT_DATA__`、
+`__INITIAL_STATE__`、`window.process.env` 这类「应用用来判断自身环境」的变量。
+补前缀只应发生在**请求发出**与**属性赋值**这两个时刻。
+
 
 对上述情况，代理只保证三件事：**请求落在 `/{服务名}/` 内、Cookie 不跨服务污染、重定向不跳出前缀**。
 
@@ -234,7 +258,7 @@ services:
 | Go / Node 普通 Web（模板渲染） | `strip` | `html_rewrite: true` | — |
 | 静态站 / 纯 HTML | `strip` | `html_rewrite: true` | — |
 | 常规 SPA（Vue/React 打包，URL 以字面量出现） | `strip` | `html_rewrite: true` | — |
-| 运行时按 `location` 拼绝对路径的 SPA（openlist/alist） | **子域名** | 全关（零改写） | — |
+| 运行时按 `location` 拼绝对路径的 SPA（openlist/alist） | `strip` | `html_rewrite: true` | — |
 | Java（自带 context-path） | `pass-through` | `html_rewrite: false` | — |
 | 老旧系统（重定向/ Cookie 有 bug） | `isolated` | 全关 | `no_full_compat: true` |
 | WebSocket / SSE 服务 | 任意 | 按需 | 已透传 Upgrade 与 Flush |
