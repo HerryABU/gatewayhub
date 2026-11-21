@@ -50,6 +50,12 @@ type Engine struct {
 	loopInjected bool
 	// trustProxies 决定客户端 IP 是否取 XFF/X-Real-IP（前面有可信反代时才可开）
 	trustProxies bool
+
+	// guard 识别「网关与后端互相推回去」的确定性重定向自环（跨服务共享，按 key 区分）。
+	guard *selfLoopGuard
+	// absHints 对「越界归因」日志做节流：同一 服务+前缀 60 秒只打一条，
+	// 否则一个没配 base path 的 SPA 能把日志刷爆。
+	absHints sync.Map // key: 服务名|前缀 → lastUnix(int64)
 }
 
 // New 创建引擎；table 为 nil 时创建一个空表（此时引擎不匹配任何路径，等价于未启用）。
@@ -60,6 +66,7 @@ func New(opts Options) *Engine {
 		audit:        opts.Audit,
 		pool:         newTransportPool(),
 		trustProxies: opts.TrustProxies,
+		guard:        newSelfLoopGuard(selfLoopWindow),
 	}
 	if e.metrics == nil {
 		e.metrics = metrics.NewRegistry()
@@ -83,7 +90,7 @@ func New(opts Options) *Engine {
 func (e *Engine) apply(tbl *config.Table) {
 	runtimes := make(map[string]*runtime, len(tbl.Services))
 	for _, svc := range tbl.Services {
-		runtimes[strings.ToLower(svc.Name)] = newRuntime(svc, e.pool, e.metrics, tbl.Breaker)
+		runtimes[strings.ToLower(svc.Name)] = newRuntime(svc, e.pool, e.metrics, tbl.Breaker, e.guard)
 	}
 	m := matcher.New(tbl.Services)
 
@@ -170,6 +177,20 @@ func (e *Engine) HasPrefix(first string) bool {
 	return m.Has(first)
 }
 
+// AttributeUnmatched 对「不归任何服务」的路径做越界归因（只写指标与诊断日志，
+// 不改变响应，绝不据此路由）。供路由层在 404 / SPA 回退之前调用。
+func (e *Engine) AttributeUnmatched(path string) {
+	if e == nil {
+		return
+	}
+	e.mu.RLock()
+	m := e.matcher
+	e.mu.RUnlock()
+	if owner, pfx, hit := m.Owner(path); hit {
+		e.noteAbsPrefix(owner, pfx, path)
+	}
+}
+
 // Active 表示隔离网关是否真的接管了路径空间（至少声明了一个服务）。
 // 未声明任何服务时保持 false：既有的部署前缀剥离/DB 路由行为完全不变。
 func (e *Engine) Active() bool { return e != nil && e.Count() > 0 }
@@ -196,6 +217,13 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	svc, rest, ok := m.Lookup(r.URL.Path)
 	if !ok {
+		// 越界归因（FR-2 的 known_abs_prefixes「仅用于日志与告警」）：
+		// 该路径虽然不归任何服务，但可能正是某服务后端前端「没配 base path」后打出来的
+		// 根路径请求（典型：/assets/app.js、/api/public/settings）。这里只归因 + 计数，
+		// 绝不据此转发（FR-3）。
+		if owner, pfx, hit := m.Owner(r.URL.Path); hit {
+			e.noteAbsPrefix(owner, pfx, r.URL.Path)
+		}
 		// FR-3：未匹配不猜测归属，直接 404
 		writeJSON(w, http.StatusNotFound, "route not found")
 		return
@@ -343,4 +371,33 @@ func writeJSON(w http.ResponseWriter, code int, msg string) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	_, _ = fmt.Fprintf(w, `{"code":%d,"message":%q}`, code, msg)
+}
+
+// selfLoopWindow 是「重定向自环」判定的观察窗口：同一 服务+来源+后端路径 在窗口内
+// 第 2 次命中才拦截，给「302 到同一路径 + 种 Cookie」这类一次性自跳留出余地。
+const selfLoopWindow = 60 * time.Second
+
+// noteAbsPrefix 记录一次「后端前端越过服务前缀」的越界请求：按服务计数，并按
+// 服务+前缀节流打日志（60 秒一条），把责任边界写清楚（FR-18）。
+//
+// 典型现场：openlist 没配 site_url 时，前端运行时把资源与 API 拼成根路径
+// （/assets/x.js、/api/public/settings），浏览器于是直接打到网关根 —— 这类请求
+// 现在会被明确归因到服务，而不是只留一条没人看得懂的 404。
+func (e *Engine) noteAbsPrefix(owner *config.Service, prefix, path string) {
+	if c := e.metrics.For(owner.Name); c != nil {
+		c.AbsPrefixHits.Add(1)
+	}
+	key := strings.ToLower(owner.Name) + "|" + prefix
+	now := time.Now().Unix()
+	if v, ok := e.absHints.Load(key); ok {
+		if last, _ := v.(int64); now-last < 60 {
+			return
+		}
+	}
+	e.absHints.Store(key, now)
+	diag.Logf(diag.ConfigError, owner.Name,
+		"未匹配路径 %s 命中该服务声明的已知绝对前缀 %q：这是后端前端没配 base path 造成的越界请求"+
+			"（浏览器直接请求了网关根路径），已按 FR-3 返回 404、不猜测归属；"+
+			"处理方式：让后端配置自身 base path（如 openlist 的 site_url 带 /%s）并把该服务改为 pass-through",
+		path, prefix, owner.Name)
 }

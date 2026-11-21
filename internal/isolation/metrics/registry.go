@@ -23,8 +23,11 @@ type Counters struct {
 	BackendErrors    atomic.Int64
 	BreakerTrips     atomic.Int64
 	LoopAlerts       atomic.Int64
-	TotalLatencyMs   atomic.Int64
-	LastSeenUnix     atomic.Int64
+	// AbsPrefixHits 是「后端前端越过服务前缀、请求打到网关根路径」的次数
+	// （命中 known_abs_prefixes 但未带服务名，已 404）。>0 说明该后端没配 base path。
+	AbsPrefixHits  atomic.Int64
+	TotalLatencyMs atomic.Int64
+	LastSeenUnix   atomic.Int64
 }
 
 // AddStatus 按状态码区间累计。
@@ -60,6 +63,7 @@ type Snapshot struct {
 	BackendErrors    int64   `json:"backend_errors"`
 	BreakerTrips     int64   `json:"breaker_trips"`
 	LoopAlerts       int64   `json:"loop_alerts"`
+	AbsPrefixHits    int64   `json:"abs_prefix_hits"`
 	AvgLatencyMs     float64 `json:"avg_latency_ms"`
 	LastSeenUnix     int64   `json:"last_seen_unix"`
 }
@@ -82,6 +86,7 @@ func (c *Counters) Snapshot(service string) Snapshot {
 		BackendErrors:    c.BackendErrors.Load(),
 		BreakerTrips:     c.BreakerTrips.Load(),
 		LoopAlerts:       c.LoopAlerts.Load(),
+		AbsPrefixHits:    c.AbsPrefixHits.Load(),
 		LastSeenUnix:     c.LastSeenUnix.Load(),
 	}
 	if s.Requests > 0 {

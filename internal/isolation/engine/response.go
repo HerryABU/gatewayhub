@@ -2,9 +2,13 @@ package engine
 
 import (
 	"bytes"
+	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
+	"strings"
+	"time"
 
 	"gatewayhub/internal/isolation/config"
 	"gatewayhub/internal/isolation/diag"
@@ -49,6 +53,15 @@ func (rt *runtime) modifyResponse(resp *http.Response) error {
 			resp.Header.Set("Location", next)
 			cnt.LocationRewrites.Add(1)
 		}
+
+		// 1b) 确定性重定向自环：strip/isolated 下后端把浏览器指回它自己的 base path，
+		// 剥前缀后又回到同一后端路径 —— 循环闭合、永远不前进。首次只诊断，再次命中才 508。
+		if isRedirect(resp.StatusCode) && cfg.Mode != config.ModePassThrough {
+			if rt.selfLoopConfirmed(resp, cfg, cnt, resp.Header.Get("Location")) {
+				rt.writeLoopDetected(resp, cfg, resp.Header.Get("Location"))
+				return nil
+			}
+		}
 	}
 
 	// 2) Set-Cookie（加帽 + Path 收紧）
@@ -78,7 +91,103 @@ func (rt *runtime) modifyResponse(resp *http.Response) error {
 	return nil
 }
 
-// bodyEligible 判断该响应是否值得读入改写（HEAD/204/304 无实体）。
+// selfLoopConfirmed 判断本次 3xx 是否构成「确定性自环」，并决定是否升级为终止。
+//
+// 判据是纯函数式的（不靠猜测、不靠时间窗口猜）：Location 去掉服务前缀后的路径，正好
+// 等于本次转发给后端的路径。此时浏览器下一步请求的后端路径与刚才完全一致，而 strip
+// 又会同样地剥掉前缀，循环闭合。
+//
+// 返回 true 表示「窗口内已确认是死循环，应当拦截」；首次命中只诊断、放行。
+func (rt *runtime) selfLoopConfirmed(resp *http.Response, cfg *config.Service, cnt *metrics.Counters, loc string) bool {
+	if rt.loopGuard == nil || resp.Request == nil || resp.Request.URL == nil || loc == "" {
+		return false
+	}
+	backendPath := resp.Request.URL.Path
+	target, ok := locationPath(loc)
+	if !ok || stripServicePrefix(target, cfg.Prefix) != backendPath {
+		return false
+	}
+	key := rt.name + "|" + proxyIP(resp.Request) + "|" + backendPath
+	n := rt.loopGuard.Hit(key, time.Now())
+	cnt.LoopAlerts.Add(1)
+	if n == 1 {
+		diag.Logf(diag.LoopWarning, rt.name,
+			"检测到确定性重定向自环（首次）：后端 %d → Location=%q，去前缀后仍是后端路径 %q；"+
+				"该服务很可能已自行配置 base path（如 openlist 的 site_url 带 /%s），应改为 pass-through",
+			resp.StatusCode, loc, backendPath, cfg.Name)
+		return false
+	}
+	diag.Logf(diag.ConfigError, rt.name,
+		"重定向自环确认（窗口内第 %d 次），返回 508 终止：后端路径 %q；"+
+			"修复方式：把该服务改为 pass-through（后端自己认前缀），或去掉后端的 base path 配置",
+		n, backendPath)
+	return true
+}
+
+// writeLoopDetected 把响应替换为 508 + 可执行的修复建议（不泄露后端 IP:端口）。
+func (rt *runtime) writeLoopDetected(resp *http.Response, cfg *config.Service, loc string) {
+	msg := fmt.Sprintf("%s 的重定向构成死循环：后端 3xx 指向 %q，而网关按 %s 模式剥掉 /%s 前缀后又回到同一后端路径。请把该服务改为 pass-through（后端自己认前缀），或去掉后端自身的 base path 配置。",
+		cfg.Name, loc, cfg.Mode, cfg.Name)
+	body := fmt.Sprintf(`{"code":%d,"message":%q}`, http.StatusLoopDetected, msg)
+	if resp.Body != nil {
+		_ = resp.Body.Close()
+	}
+	resp.StatusCode = http.StatusLoopDetected
+	resp.Status = "508 Loop Detected"
+	h := resp.Header
+	h.Del("Location")
+	h.Del("Content-Encoding")
+	h.Del("Content-MD5")
+	h.Del("ETag")
+	h.Del("Transfer-Encoding")
+	h.Set("Content-Type", "application/json; charset=utf-8")
+	h.Set("Cache-Control", "no-store")
+	h.Set("Content-Length", strconv.Itoa(len(body)))
+	resp.ContentLength = int64(len(body))
+	resp.Body = io.NopCloser(strings.NewReader(body))
+}
+
+// isRedirect 判断状态码是否为 3xx。
+func isRedirect(code int) bool { return code >= 300 && code < 400 }
+
+// locationPath 从 Location 头里取出路径部分（绝对 URL、协议相对、根相对都支持）。
+func locationPath(loc string) (string, bool) {
+	loc = strings.TrimSpace(loc)
+	if loc == "" {
+		return "", false
+	}
+	u, err := url.Parse(loc)
+	if err != nil {
+		return "", false
+	}
+	if u.Path != "" {
+		return u.Path, true
+	}
+	// 形如 "/foo" 的解析结果已经是 Path；形如 "foo" 的相对值是 Path 相对，
+	// 拿不到稳定的后端归属，直接放弃判定（宁可不拦，也不误拦）。
+	if strings.HasPrefix(loc, "/") {
+		if i := strings.IndexAny(loc, "?#"); i > 0 {
+			return loc[:i], true
+		}
+		return loc, true
+	}
+	return "", false
+}
+
+// stripServicePrefix 把对外路径映射回后端路径（"/A/x" → "/x"，"/A" → "/"）。
+func stripServicePrefix(p, prefix string) string {
+	if prefix == "" || p == "" {
+		return p
+	}
+	if p == prefix {
+		return "/"
+	}
+	if strings.HasPrefix(p, prefix+"/") {
+		return p[len(prefix):]
+	}
+	return p
+}
+
 func bodyEligible(resp *http.Response) bool {
 	if resp.StatusCode == http.StatusNoContent || resp.StatusCode == http.StatusNotModified {
 		return false

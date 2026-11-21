@@ -14,12 +14,21 @@ import (
 type Table struct {
 	byName map[string]*config.Service // key 为小写服务名
 	names  []string                   // 排序后的服务名（输出稳定）
+
+	// absPrefix 是「后端已知绝对路径前缀 → 服务」的索引（来自 known_abs_prefixes）。
+	// 它不参与路由（绝不把 /assets/x 猜给某服务），只在未命中时用于「越界归因」：
+	// 告诉运维这条请求最可能来自哪个服务的后端前端，把责任边界写清楚（FR-18）。
+	absPrefix map[string]*config.Service
+	absNames  []string // 按前缀长度降序，保证最长前缀优先
 }
 
 // New 构建匹配表。同名服务以「启用者优先，其次先出现者」为准（配置层已保证不重复，
 // 这里只做防御）。
 func New(services []*config.Service) *Table {
-	t := &Table{byName: make(map[string]*config.Service, len(services))}
+	t := &Table{
+		byName:    make(map[string]*config.Service, len(services)),
+		absPrefix: make(map[string]*config.Service),
+	}
 	for _, s := range services {
 		if s == nil {
 			continue
@@ -37,7 +46,40 @@ func New(services []*config.Service) *Table {
 		t.names = append(t.names, k)
 	}
 	sort.Strings(t.names)
+
+	// 已知绝对路径前缀索引：配置层已做规范化（单个 / 开头、去尾斜杠），这里再去重。
+	for _, s := range t.byName {
+		for _, p := range s.KnownAbsPrefix {
+			if p == "" || p == "/" {
+				continue // "/" 等于「全部路径」，放进来会把一切都归因掉，无意义
+			}
+			if _, dup := t.absPrefix[p]; dup {
+				continue // 同一前缀多处声明时以先出现者为准（配置层已告警）
+			}
+			t.absPrefix[p] = s
+			t.absNames = append(t.absNames, p)
+		}
+	}
+	sort.Slice(t.absNames, func(i, j int) bool { return len(t.absNames[i]) > len(t.absNames[j]) })
 	return t
+}
+
+// Owner 在「未命中任何服务」的路径上做越界归因：返回该路径最可能属于哪个服务，
+// 以及命中的已知绝对路径前缀。
+//
+// 只做归因与日志，绝不据此路由（FR-3 不猜测归属）：典型场景是后端 SPA 没配 base path，
+// 浏览器去请求 /assets/app.js 这种根路径，网关应当明确告诉运维「这是 X 的后端造成的」。
+func (t *Table) Owner(path string) (*config.Service, string, bool) {
+	if t == nil || len(t.absPrefix) == 0 || !strings.HasPrefix(path, "/") {
+		return nil, "", false
+	}
+	for _, p := range t.absNames {
+		// 必须落在段边界上：/assets 命中 /assets 与 /assets/x，但不命中 /assetsx
+		if path == p || strings.HasPrefix(path, p+"/") {
+			return t.absPrefix[p], p, true
+		}
+	}
+	return nil, "", false
 }
 
 // Lookup 按路径第一段匹配服务，返回服务与「未剥离的剩余路径」。

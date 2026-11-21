@@ -79,11 +79,12 @@ type stateKey struct{}
 
 // runtime 是单服务的运行时对象：配置可原子替换（模式热切换），代理实例常驻。
 type runtime struct {
-	name     string
-	cfg      atomic.Pointer[config.Service]
-	proxy    *httputil.ReverseProxy
-	counters *metrics.Counters
-	breaker  *breaker.Breaker
+	name      string
+	cfg       atomic.Pointer[config.Service]
+	proxy     *httputil.ReverseProxy
+	counters  *metrics.Counters
+	breaker   *breaker.Breaker
+	loopGuard *selfLoopGuard
 }
 
 // service 返回当前生效的配置快照。
@@ -104,9 +105,10 @@ func (rt *runtime) setMode(mode config.Mode) config.Mode {
 	}
 }
 
-// newRuntime 构建单服务运行时（含 ReverseProxy、指标、熔断）。
-func newRuntime(svc *config.Service, pool *transportPool, reg *metrics.Registry, brCfg config.BreakerOptions) *runtime {
-	rt := &runtime{name: svc.Name}
+// newRuntime 构建单服务运行时（含 ReverseProxy、指标、熔断、自环守卫）。
+func newRuntime(svc *config.Service, pool *transportPool, reg *metrics.Registry,
+	brCfg config.BreakerOptions, guard *selfLoopGuard) *runtime {
+	rt := &runtime{name: svc.Name, loopGuard: guard}
 	rt.cfg.Store(svc)
 	rt.counters = reg.For(svc.Name)
 	rt.breaker = breaker.New(brCfg.Failures, time.Duration(brCfg.Cooldown)*time.Second)

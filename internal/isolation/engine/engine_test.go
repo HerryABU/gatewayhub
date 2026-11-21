@@ -63,6 +63,11 @@ func newBackend(t *testing.T, htmlBody string) *backend {
 		case strings.Contains(r.URL.Path, "/redirect-abs"):
 			w.Header().Set("Location", "http://"+self+"/home")
 			w.WriteHeader(http.StatusFound)
+		case strings.Contains(r.URL.Path, "/selfredir"):
+			// 模拟「后端自己配了 base path」：把浏览器指回 前缀+当前路径，
+			// strip 模式下会原点复活，构成确定性自环。
+			w.Header().Set("Location", r.Header.Get("X-Forwarded-Prefix")+r.URL.Path)
+			w.WriteHeader(http.StatusFound)
 		case strings.Contains(r.URL.Path, "/redirect"):
 			w.Header().Set("Location", "/home")
 			w.WriteHeader(http.StatusFound)
@@ -569,5 +574,86 @@ func TestTimeoutFallsTo504(t *testing.T) {
 	}
 	if snap := metricBy(t, e, "S"); snap.Requests != 1 {
 		t.Fatalf("请求未计数: %+v", snap)
+	}
+}
+
+// ---- 越界归因：known_abs_prefixes 只用于日志/告警（FR-2/FR-18） ----
+
+func TestAbsPrefixAttribution(t *testing.T) {
+	a := newBackend(t, "")
+	e := buildEngine(t, &config.File{Services: []config.Spec{
+		{Name: "SPA", Target: a.addr, Mode: "pass-through",
+			KnownAbsPrefixes: []string{"/assets", "/api"}},
+	}})
+
+	before := a.seen.snapshot().hits
+	for _, p := range []string{"/assets/app.js", "/api/public/settings", "/assets"} {
+		if rec := do(e, "GET", p, nil); rec.Code != http.StatusNotFound {
+			t.Fatalf("%s 应 404（不猜测归属），得到 %d", p, rec.Code)
+		}
+	}
+	if a.seen.snapshot().hits != before {
+		t.Fatal("越界请求绝不能转发到后端")
+	}
+	if got := metricBy(t, e, "SPA").AbsPrefixHits; got != 3 {
+		t.Fatalf("abs_prefix_hits = %d, want 3", got)
+	}
+
+	// 段边界必须严格：/assetsx 不是 /assets 的子路径
+	do(e, "GET", "/assetsx/evil.js", nil)
+	if got := metricBy(t, e, "SPA").AbsPrefixHits; got != 3 {
+		t.Fatalf("段边界判定错误：/assetsx 不应归因，abs_prefix_hits = %d", got)
+	}
+
+	// 没有声明 known_abs_prefixes 的服务不应被归因
+	e2 := buildEngine(t, &config.File{Services: []config.Spec{
+		{Name: "X", Target: a.addr, Mode: "isolated"},
+	}})
+	do(e2, "GET", "/assets/app.js", nil)
+	if got := metricBy(t, e2, "X").AbsPrefixHits; got != 0 {
+		t.Fatalf("未声明前缀不应归因，得到 %d", got)
+	}
+}
+
+// ---- 重定向自环：strip 模式 + 后端自带 base path = 死循环，应在第二次命中时 508 ----
+
+func TestSelfRedirectLoopGuard(t *testing.T) {
+	a := newBackend(t, "")
+	e := buildEngine(t, &config.File{Services: []config.Spec{
+		{Name: "A", Target: a.addr, Mode: "strip"},
+	}})
+
+	// 第 1 次：只诊断，保留 302（给「302 到同路径 + 种 Cookie」的一次性自跳留余地）
+	rec := do(e, "GET", "/A/selfredir", nil)
+	if rec.Code != http.StatusFound {
+		t.Fatalf("首次自环应放行 302，得到 %d", rec.Code)
+	}
+	if got := metricBy(t, e, "A").LoopAlerts; got != 1 {
+		t.Fatalf("loop_alerts = %d, want 1（首次应记录）", got)
+	}
+
+	// 第 2 次：确认死循环，返回 508 + 可执行建议，且不再把浏览器推回去
+	rec = do(e, "GET", "/A/selfredir", nil)
+	if rec.Code != http.StatusLoopDetected {
+		t.Fatalf("第二次自环应 508，得到 %d（body=%s）", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("508 不应带 Location，得到 %q", loc)
+	}
+	if !strings.Contains(rec.Body.String(), "pass-through") {
+		t.Fatalf("508 应给出修复建议，body=%s", rec.Body.String())
+	}
+	if got := metricBy(t, e, "A").LoopAlerts; got != 2 {
+		t.Fatalf("loop_alerts = %d, want 2", got)
+	}
+
+	// pass-through 模式下同样形态的重定向是合法的（后端自己认前缀），不得拦截
+	e2 := buildEngine(t, &config.File{Services: []config.Spec{
+		{Name: "A", Target: a.addr, Mode: "pass-through"},
+	}})
+	for i := 0; i < 3; i++ {
+		if rec := do(e2, "GET", "/A/selfredir", nil); rec.Code != http.StatusFound {
+			t.Fatalf("pass-through 下不应拦截，第 %d 次得到 %d", i+1, rec.Code)
+		}
 	}
 }

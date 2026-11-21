@@ -103,6 +103,11 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 	fileServer := http.FileServer(http.FS(dist))
 	r.NoRoute(func(c *gin.Context) {
 		path := c.Request.URL.Path
+		// 越界归因：这条请求不归任何隔离服务，但可能正是某服务后端前端「没配 base path」
+		// 打出来的根路径请求（/assets/*、/api/*）。只记指标与诊断，不改变去向。
+		if h.Iso != nil && h.Iso.Active() && !h.Iso.Matches(path) {
+			h.Iso.AttributeUnmatched(path)
+		}
 		if strings.HasPrefix(path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": "not found"})
 			return
