@@ -2,7 +2,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.0**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.1**
 
 ---
 
@@ -10,12 +10,13 @@
 
 ### 核心转发
 - 基于路径前缀的反向代理（`net/http/httputil.ReverseProxy`）
-- **子域名路由**：`java-order.localhost:8088/user` 与 `/{prefix}/user` 双模式并存，子域名命中时**零路径重写、零 `<base>` 注入**，纯透明转发（速度=源站）
+- **子域名路由**：`java-order.localhost:8088/user` 与 `/{prefix}/user` 双模式并存，子域名命中时**零路径重写、零 `<base>` 注入**，纯透明转发（速度=源站）；子域名优先级最高——连后端自己的 `/api/*`、`/assets/*` 也直接转发，不会被网关同名路径吞掉
 - **多级路径前缀**（最长前缀优先）：`v2/beta` 可覆盖 `v2`，段边界对齐
 - **WebSocket** 透明转发（HMR / 推送 / 聊天长连接不超时）
 - 后端地址支持 `:8080`、`:8080/api/v1`、完整 URL（**含自定义端口**，如 `http://example.com:8443`）及 **`${ENV}` 环境变量**（如 `http://${ORDER_HOST}:8080`，未设置时创建路由报错）
 - **外部网站代理**：完整 URL 目标天然支持（含 HTTPS），健康检查同样按 scheme/host 探测
-- **响应内容「绝对改相对」重写**：HTML 属性/内联样式根绝对路径 → 文档相对路径（`./x`），并注入 `<base href="/{prefix}/">` 兜底解析；外链 CSS 的 `url()/@import` 按 CSS 文件自身位置换算相对路径；JS 中 API 调用相对化、资源引用与 `Location` 头保留前缀绝对（按模块/脚本基准解析最稳）
+- **响应内容「绝对改相对」重写**：HTML 属性/内联样式根绝对路径 → 文档相对路径（`./x`），并注入 `<base href="/{prefix}/">` 兜底解析；外链 CSS 的 `url()/@import` 按 CSS 文件自身位置换算相对路径；JS 只改写**确定的资源类**字面量（`/assets` `/static`…），资源引用与 `Location` 头保留前缀绝对
+- **运行期前缀 shim**：`<head>` 最前注入一段脚本，给真正**发出去的请求**补前缀 —— `fetch` / `XMLHttpRequest`（axios 走它）/ `sendBeacon` / `EventSource` / `WebSocket` / `history.pushState|replaceState`，以及 DOM 的 `src`/`href`（`setAttribute` + 属性 setter）。JS 里的 `/api/*` 字符串**不做静态改写**（它可能是 `{path:"/api/x"}` 这类请求体数据，改了会污染业务），只碰请求不碰数据
 - 路由**毫秒级热加载**，无需重启
 - 透传请求头，自动添加 `X-Forwarded-For` / `X-Real-IP` / `X-Forwarded-Proto`
 - 超时/错误处理：502 / 504 / 404 / 503
