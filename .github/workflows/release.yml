@@ -1,0 +1,215 @@
+name: Release
+
+# 两种触发方式：
+#   1) push tag v*        —— 常规发布
+#   2) workflow_dispatch  —— 在 Actions 页面点「Run workflow」，
+#      可自动创建并推送 tag（版本号留空则读 internal/handlers/settings.go）
+#
+# 注意：用 GITHUB_TOKEN 推送 tag 不会再触发新 workflow（GitHub 防止递归），
+# 所以打 tag 与构建发布放在同一个 workflow 内完成。
+on:
+  push:
+    tags:
+      - 'v[0-9]*'
+  workflow_dispatch:
+    inputs:
+      version:
+        description: '版本号（不含 v，如 1.5.6）。留空则读取 internal/handlers/settings.go'
+        required: false
+        default: ''
+      create_tag:
+        description: '自动创建并推送 tag'
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  BINARY: gatewayhub
+
+jobs:
+  # ---------------------------------------------------------------- 准备
+  prepare:
+    name: 解析版本
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+      tag: ${{ steps.v.outputs.tag }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: 解析并校验版本号
+        id: v
+        run: |
+          set -euo pipefail
+          CODE_VER=$(sed -n 's/.*"version":[[:space:]]*"\([^"]*\)".*/\1/p' internal/handlers/settings.go | head -1)
+          echo "settings.go 中的版本号: ${CODE_VER:-<空>}"
+          if [ -z "$CODE_VER" ]; then
+            echo "::error::未能从 internal/handlers/settings.go 解析到 version"
+            exit 1
+          fi
+
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            VER="${GITHUB_REF_NAME#v}"
+            SRC="tag ${GITHUB_REF_NAME}"
+          else
+            VER="${{ inputs.version }}"
+            [ -z "$VER" ] && VER="$CODE_VER"
+            SRC="手动触发"
+          fi
+
+          if [ "$VER" != "$CODE_VER" ]; then
+            echo "::error::版本号不一致：$SRC 给出 $VER，代码里是 $CODE_VER。请先同步 settings.go 与 README。"
+            exit 1
+          fi
+
+          echo "version=$VER" >> "$GITHUB_OUTPUT"
+          echo "tag=v$VER" >> "$GITHUB_OUTPUT"
+          echo "发布版本: v$VER（$SRC）"
+
+      - name: 创建并推送 tag
+        if: github.event_name == 'workflow_dispatch' && inputs.create_tag
+        env:
+          TAG: ${{ steps.v.outputs.tag }}
+        run: |
+          set -euo pipefail
+          if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+            echo "tag $TAG 已存在，跳过创建"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "GatewayHub $TAG"
+          git push origin "$TAG"
+          echo "已创建并推送 tag $TAG"
+
+  # ---------------------------------------------------------------- 前端
+  frontend:
+    name: 构建前端
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # 前端只构建一次，交给下游 10 个编译任务复用，
+      # 避免在 matrix 里重复跑 10 遍 npm ci + vite build。
+      - name: npm ci && vite build
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+          du -sh dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+          retention-days: 1
+
+  # ---------------------------------------------------------------- 交叉编译
+  build:
+    name: ${{ matrix.name }}
+    needs: [prepare, frontend]
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 与 build-all.ps1 的目标矩阵保持一致（10 个）。
+        # 数据库驱动是纯 Go 的 glebarez/sqlite，因此 CGO_ENABLED=0 可全平台交叉编译。
+        include:
+          - { name: gatewayhub-win-x64.exe,    goos: windows, goarch: amd64 }
+          - { name: gatewayhub-win-arm64.exe,  goos: windows, goarch: arm64 }
+          - { name: gatewayhub-linux-x32,      goos: linux,   goarch: "386" }
+          - { name: gatewayhub-linux-x64,      goos: linux,   goarch: amd64 }
+          - { name: gatewayhub-linux-arm32,    goos: linux,   goarch: arm, goarm: "7" }
+          - { name: gatewayhub-linux-armv6,    goos: linux,   goarch: arm, goarm: "6" }
+          - { name: gatewayhub-linux-arm64,    goos: linux,   goarch: arm64 }
+          - { name: gatewayhub-linux-riscv64,  goos: linux,   goarch: riscv64 }
+          - { name: gatewayhub-mac-x64,        goos: darwin,  goarch: amd64 }
+          - { name: gatewayhub-mac-arm64,      goos: darwin,  goarch: arm64 }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # //go:embed all:web/dist 要求编译时 dist 必须存在
+      - uses: actions/download-artifact@v4
+        with:
+          name: web-dist
+          path: web/dist
+
+      - name: 编译
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          go build -trimpath -ldflags="-s -w" -o "out/${{ matrix.name }}" .
+          ls -lh "out/${{ matrix.name }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bin-${{ matrix.name }}
+          path: out/${{ matrix.name }}
+          retention-days: 3
+
+  # ---------------------------------------------------------------- 发布
+  publish:
+    name: 发布 Release
+    needs: [prepare, build]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # merge-multiple 把 10 个 bin-* 目录合并到同一层
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: bin-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: 生成校验和
+        working-directory: artifacts
+        run: |
+          set -euo pipefail
+          ls -lh
+          sha256sum * > SHA256SUMS
+          cat SHA256SUMS
+
+      - name: 创建 GitHub Release 并上传
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+          VER: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          # 幂等：重跑同一个 tag 时追加覆盖而不是报 "release already exists"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG 已存在，改为覆盖上传"
+            gh release upload "$TAG" artifacts/* --clobber
+          else
+            gh release create "$TAG" \
+              --title "GatewayHub v$VER" \
+              --generate-notes \
+              artifacts/*
+          fi
+          echo "已发布 $TAG"

@@ -1,0 +1,62 @@
+name: CI
+
+# 日常校验：PR 与 main 分支推送。
+# 不产出发布物，只验证「前端能构建 + Go 能编译（含 go:embed）+ 测试通过」。
+on:
+  push:
+    branches: [main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: 构建与测试
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 安装 Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: 安装 Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      # web/dist 不入库但被 //go:embed all:web/dist 引用，
+      # 所以任何 go build 之前都必须先构建前端，否则 embed 直接失败。
+      - name: 构建前端
+        working-directory: web
+        run: |
+          npm ci
+          npm run build
+
+      - name: go vet
+        run: go vet ./...
+
+      - name: go test
+        run: go test ./internal/...
+
+      - name: 编译验证（embed 是否完整）
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          go build -trimpath -ldflags="-s -w" -o /tmp/gatewayhub-check .
+          ls -lh /tmp/gatewayhub-check

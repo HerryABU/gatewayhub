@@ -1,5 +1,8 @@
 # GatewayHub 多应用聚合网关
 
+[![CI](https://github.com/HerryABU/gatewayhub/actions/workflows/ci.yml/badge.svg)](https://github.com/HerryABU/gatewayhub/actions/workflows/ci.yml)
+[![Release](https://github.com/HerryABU/gatewayhub/actions/workflows/release.yml/badge.svg)](https://github.com/HerryABU/gatewayhub/actions/workflows/release.yml)
+
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
 > 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.6**
@@ -171,6 +174,26 @@ cd web && npm install && npm run dev     # 监听 :5173，代理 /api 到 :8088
   ```
   含 `time / method / path / status / latency_ms / client_ip / user_agent / route_prefix / headers`（完整请求头）。可用 `access_log.enabled` / `access_log.dir` 关闭或改目录。
 - 地图 GeoJSON（中国/世界）已随前端产物内嵌进二进制。
+
+---
+
+## 📦 发布（GitHub Actions）
+
+多平台产物由 CI 自动构建，无需本地交叉编译：
+
+1. 改版本号：`internal/handlers/settings.go` 的 `version` 与本文件顶部的版本一致；
+2. 推到 `main`；
+3. 打开 **Actions → Release → Run workflow**，版本号留空即读取代码里的值，勾选「自动创建并推送 tag」。
+
+工作流会依次：校验版本一致性 → 创建并推送 `v{版本}` tag → 构建前端 → 并行交叉编译 10 个平台 → 发布 Release 并附 `SHA256SUMS`。
+
+也可以直接推 tag：`git tag v1.5.7 && git push origin v1.5.7`。
+
+PR 与 `main` 推送会跑 **CI**：`npm ci` + `vite build` + `go vet` + `go test` + 单平台编译（验证 `go:embed` 所需的前端产物齐全）。
+
+> 前端产物 `web/dist` 不入库但被 `//go:embed all:web/dist` 引用，所以任何 `go build` 之前都必须先构建前端 —— CI 里由 `frontend` 作业产出后分发给 10 个编译任务复用。
+
+本地全平台构建仍可用 `.\build-all.ps1`（Windows PowerShell）。
 
 ---
 
