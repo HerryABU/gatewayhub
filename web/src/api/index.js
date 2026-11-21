@@ -65,5 +65,11 @@ export default {
   // 数据库备份
   backupCreate: () => api.post('/backup'),
   backupList: () => api.get('/backup/list'),
-  backupDelete: (id) => api.delete(`/backup/${id}`)
+  backupDelete: (id) => api.delete(`/backup/${id}`),
+  // 路径隔离网关
+  isolationServices: () => api.get('/isolation/services'),
+  isolationMetrics: () => api.get('/isolation/metrics'),
+  isolationAudit: (limit = 50) => api.get('/isolation/audit', { params: { limit } }),
+  setIsolationMode: (name, mode) => api.patch(`/isolation/services/${encodeURIComponent(name)}/mode`, { mode }),
+  isolationReload: () => api.post('/isolation/reload')
 }
