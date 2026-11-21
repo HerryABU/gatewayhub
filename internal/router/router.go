@@ -12,6 +12,7 @@ import (
 
 	"gatewayhub/internal/auth"
 	"gatewayhub/internal/handlers"
+	isohandlers "gatewayhub/internal/handlers/isolation"
 )
 
 // Setup 构建 http.Handler：外层先做「子路径部署前缀」剥离（在 Gin 路由匹配之前），
@@ -82,6 +83,14 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 				admin.POST("/migrate/test", h.MigrateTest)
 				admin.POST("/migrate/run", h.MigrateRun)
 
+				// 路径隔离网关：配置/状态/指标/降级/热加载/审计
+				iso := isohandlers.New(h.Iso, h.Cfg.Isolation.File)
+				admin.GET("/isolation/services", iso.List)
+				admin.GET("/isolation/metrics", iso.Metrics)
+				admin.GET("/isolation/audit", iso.Audit)
+				admin.PATCH("/isolation/services/:name/mode", iso.SetMode)
+				admin.POST("/isolation/reload", iso.Reload)
+
 				// 数据库备份
 				admin.POST("/backup", h.BackupCreate)
 				admin.GET("/backup/list", h.BackupList)
@@ -101,6 +110,11 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 		// 未完成建站时，禁止代理转发，仅提供前端（向导页）
 		if !h.IsConfigured() {
 			serveSPA(c, dist, fileServer)
+			return
+		}
+		// 显式配置的路径隔离网关优先：命中 /{服务名}/ 段即由它处理（含 disabled → 503）
+		if h.Iso != nil && h.Iso.Matches(path) {
+			h.Iso.ServeHTTP(c.Writer, c.Request)
 			return
 		}
 		if h.Proxy.Matchable(path, c.Request.Host) {
@@ -169,10 +183,22 @@ func firstSeg(p string) (string, string) {
 // 必须在 Gin 路由匹配之前执行（Gin 的中间件在路由匹配之后才运行，改路径不会重新路由）。
 func stripDeployPrefix(p string, h *handlers.Handler) string {
 	seg, rest := firstSeg(p)
-	if seg != "" && rest != "" && !reservedFirstSegments[seg] && !h.Proxy.HasPathPrefix(seg) {
-		return rest
+	if seg == "" || rest == "" || reservedFirstSegments[seg] {
+		return p
 	}
-	return p
+	if h.Proxy.HasPathPrefix(seg) {
+		return p
+	}
+	// 隔离网关的服务名同样是业务首段：绝不能被当成「部署前缀」剥掉
+	if h.Iso != nil && h.Iso.HasPrefix(seg) {
+		return p
+	}
+	// 隔离网关接管路径空间后，路径是「显式声明」的：不再猜测部署前缀，
+	// 未声明的多段路径直接 404（NFR-5 不猜测归属）。未声明任何服务时保持原行为。
+	if h.Iso != nil && h.Iso.Active() {
+		return p
+	}
+	return rest
 }
 
 // securityMiddleware 安全防护中间件（建站向导路径豁免）

@@ -51,3 +51,10 @@ backup:
     retain: 30
 setup:
     allow_remote: false
+isolation:
+    enabled: true
+    file: isolation.yaml
+    watch: true
+    watch_interval: 5
+    audit_file: logs/isolation-audit.log
+    trust_proxies: false

@@ -1,0 +1,87 @@
+# ============================================================================
+# 反向代理路径隔离网关 · 服务配置表（显式声明，改这里不改代码）
+#
+# 访问形态固定为：   http://<代理域名>/{服务名}/[服务自己的路由]
+# 例：/A/admin  →  A 后端（strip 模式时后端收到 /admin；pass-through 时收到 /A/admin）
+#
+# 处理模式 mode：
+#   pass-through  原样透传 /{服务名}/...，后端自己认前缀；只做头层修正，绝不改响应体
+#   strip         剥离 /{服务名} 前缀，后端以为自己在根路径；允许按开关改写 HTML/CSS 字面量
+#   isolated      剥离前缀 + 仅做 HTTP 头层修正；响应体一个字节都不改（一键降级用这个）
+#
+# 字段速查（全部字段都可在单条服务里覆盖 defaults）：
+#   name                 必填  路径第一段。仅字母数字与 - _ . ~，且不能是网关保留字
+#                             （api / assets / static / favicon / health / isolation / login）
+#   target               必填  后端地址，支持：9001 | :9001 | 10.0.0.5:8080 |
+#                             10.0.0.5:8080/root | http://host:port/root | https://…
+#                             支持 ${ENV_VAR} 环境变量引用（未设置则加载失败）
+#   mode                 可选  pass-through | strip | isolated（默认取 defaults.mode）
+#   cookie_hat           可选  Cookie 帽子前缀，如 A__；默认 {name}__；显式 "" = 不做 Cookie 隔离
+#   html_rewrite         可选  是否改写 HTML/CSS 字面量（仅 strip 模式生效，默认 false）
+#   known_abs_prefixes   可选  后端已知绝对路径前缀（如 /static），仅用于日志与告警，不做改写
+#   timeout              可选  后端连接/响应超时秒数（默认 10）
+#   host_mode            可选  keep 保留代理域名（默认）| rewrite 改写为后端 IP:端口
+#   no_full_compat       可选  标记「不承诺完整兼容」，仅保证前缀归属 / Cookie 隔离 / 重定向不越界
+#   max_rewrite_bytes    可选  响应体改写上限字节（默认 2MB，超限流式原样透传）
+#   drop_foreign_cookies 可选  true 时丢弃不属于本服务帽子的 Cookie（默认 false=保留）
+#   passthrough_location_prefix  可选  pass-through 下未带前缀的 Location 是否补前缀（默认 false）
+#   enabled              可选  是否启用（默认 true；禁用后该前缀返回 503 而不是漏给前端）
+#
+# 全局段：
+#   defaults.mode / timeout / host_mode / max_rewrite_bytes
+#   defaults.cookie_hat_suffix   未显式配置 cookie_hat 时的后缀（默认 "__"）
+#   breaker.failures / cooldown  连续失败熔断阈值与冷却秒数（failures<=0 关闭熔断）
+#   redirect_loop.threshold/window  同一来源在窗口内 3xx 次数超阈值即告警（只告警一次/窗口）
+#
+# 改完保存即可：isolation.watch=true 时约 5 秒内热加载，无需重启；
+# 每次加载/模式切换都会写入 audit_file（JSONL），可用 GET /api/isolation/audit 查询。
+# ============================================================================
+
+version: 1
+
+defaults:
+  mode: isolated
+  timeout: 10
+  host_mode: keep
+  max_rewrite_bytes: 2097152
+  cookie_hat_suffix: "__"
+  drop_foreign_cookies: false
+
+breaker:
+  # 连续失败 5 次即熔断，冷却 30 秒后放行一次探测
+  failures: 5
+  cooldown: 30
+
+redirect_loop:
+  # 同一 服务+客户端 在 10 秒内重定向超过 8 次 → 打一条 redirect_loop 告警
+  threshold: 8
+  window: 10
+
+# 默认留空：不配置任何服务时，隔离网关不匹配任何路径（也不会影响网关控制台）。
+services: []
+
+# ---- 示例（按需取消注释） ---------------------------------------------------
+# services:
+#   # 1) 普通 Go/Node 服务：剥离前缀 + 打开 HTML 字面量改写
+#   - name: A
+#     target: 10.0.0.11:8080
+#     mode: strip
+#     cookie_hat: "A__"
+#     html_rewrite: true
+#     known_abs_prefixes: ["/static", "/assets"]
+#     timeout: 15
+#
+#   # 2) 老 Java 服务：自己认 context-path，原样透传（绝不改 body）
+#   - name: B
+#     target: 10.0.0.12:9090/legacy
+#     mode: pass-through
+#     cookie_hat: "B__"
+#     no_full_compat: true
+#
+#   # 3) SPA（未配置 basename）：先按 strip + HTML 改写跑，出问题一键降级 isolated
+#   - name: SPA
+#     target: 10.0.0.13:3000
+#     mode: strip
+#     cookie_hat: "SPA__"
+#     html_rewrite: true
+#     no_full_compat: true   # 运行时 fetch('/api') / import('/chunk.js') 代理层不承诺改写

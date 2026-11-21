@@ -61,26 +61,37 @@ type AccessLogConfig struct {
 }
 
 type SecurityConfig struct {
-	Enabled       bool    `yaml:"enabled"`
-	RateLimit     int     `yaml:"rate_limit"`      // 每 IP 每秒最大请求数
-	Burst         int     `yaml:"burst"`           // 突发峰值
-	BanThreshold  int     `yaml:"ban_threshold"`   // 触发封禁的连续超限次数
-	BanDuration   int     `yaml:"ban_duration"`    // 自动封禁时长（秒）
-	WAFEnabled    bool    `yaml:"waf_enabled"`     // SQL/XSS 拦截
-	WAFBodyMax    int     `yaml:"waf_body_max"`    // WAF 请求体扫描上限（字节），超限跳过扫描（默认 512KB）
-	GlobalRPS     int     `yaml:"global_rps"`      // 全局每秒最大请求数（0=不限）
-	TrustProxies  bool    `yaml:"trust_proxies"`   // 是否信任 X-Forwarded-For
+	Enabled      bool `yaml:"enabled"`
+	RateLimit    int  `yaml:"rate_limit"`    // 每 IP 每秒最大请求数
+	Burst        int  `yaml:"burst"`         // 突发峰值
+	BanThreshold int  `yaml:"ban_threshold"` // 触发封禁的连续超限次数
+	BanDuration  int  `yaml:"ban_duration"`  // 自动封禁时长（秒）
+	WAFEnabled   bool `yaml:"waf_enabled"`   // SQL/XSS 拦截
+	WAFBodyMax   int  `yaml:"waf_body_max"`  // WAF 请求体扫描上限（字节），超限跳过扫描（默认 512KB）
+	GlobalRPS    int  `yaml:"global_rps"`    // 全局每秒最大请求数（0=不限）
+	TrustProxies bool `yaml:"trust_proxies"` // 是否信任 X-Forwarded-For
 }
 
 type BackupConfig struct {
-	Enabled   bool   `yaml:"enabled"`
-	Dir       string `yaml:"dir"`       // 备份目录
-	Interval  string `yaml:"interval"`  // 备份间隔，如 "24h"
-	Retain    int    `yaml:"retain"`    // 保留最近 N 份
+	Enabled  bool   `yaml:"enabled"`
+	Dir      string `yaml:"dir"`      // 备份目录
+	Interval string `yaml:"interval"` // 备份间隔，如 "24h"
+	Retain   int    `yaml:"retain"`   // 保留最近 N 份
 }
 
 type SetupConfig struct {
 	AllowRemote bool `yaml:"allow_remote"` // 是否允许远程访问建站向导（默认仅 localhost）
+}
+
+// IsolationConfig 是「反向代理路径隔离网关」的开关与文件配置。
+// 服务清单本身在独立的 isolation.yaml 里显式声明（便于审计与热更新）。
+type IsolationConfig struct {
+	Enabled       bool   `yaml:"enabled"`        // 是否启用路径隔离网关
+	File          string `yaml:"file"`           // 服务配置表路径
+	Watch         bool   `yaml:"watch"`          // 文件变更时自动热加载
+	WatchInterval int    `yaml:"watch_interval"` // 轮询间隔（秒），默认 5
+	AuditFile     string `yaml:"audit_file"`     // 变更审计日志（JSONL）
+	TrustProxies  bool   `yaml:"trust_proxies"`  // 前面是否还有可信反代（决定客户端 IP 取值来源）
 }
 
 type Config struct {
@@ -95,6 +106,7 @@ type Config struct {
 	Security    SecurityConfig  `yaml:"security"`
 	Backup      BackupConfig    `yaml:"backup"`
 	Setup       SetupConfig     `yaml:"setup"`
+	Isolation   IsolationConfig `yaml:"isolation"`
 }
 
 func Default() *Config {
@@ -153,6 +165,14 @@ func Default() *Config {
 			Retain:   30,
 		},
 		Setup: SetupConfig{AllowRemote: false},
+		Isolation: IsolationConfig{
+			Enabled:       true,
+			File:          "isolation.yaml",
+			Watch:         true,
+			WatchInterval: 5,
+			AuditFile:     "logs/isolation-audit.log",
+			TrustProxies:  false, // 网关通常直接对外：默认不信任客户端自带的转发头
+		},
 	}
 }
 

@@ -18,6 +18,10 @@ const (
 	ProxyDegrade Category = "proxy_degrade"
 	// LoopWarning 疑似重定向循环。
 	LoopWarning Category = "redirect_loop"
+	// RewriteOK 改写命中（正常信息，记录命中数与响应大小）。
+	RewriteOK Category = "rewrite_ok"
+	// Lifecycle 生命周期事件（加载、模式切换）与配置提示。
+	Lifecycle Category = "lifecycle"
 )
 
 // Logf 输出一条带分类与服务的诊断日志。

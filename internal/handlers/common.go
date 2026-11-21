@@ -10,6 +10,7 @@ import (
 	"gatewayhub/internal/config"
 	"gatewayhub/internal/geo"
 	"gatewayhub/internal/health"
+	isoengine "gatewayhub/internal/isolation/engine"
 	"gatewayhub/internal/proxy"
 	"gatewayhub/internal/security"
 	"gatewayhub/internal/stats"
@@ -26,6 +27,8 @@ type Handler struct {
 	Stats      *stats.Writer
 	Security   *security.Manager
 	Backup     *backup.Manager
+	// Iso 是路径隔离网关引擎（未启用时为 nil，路由逻辑自动跳过）
+	Iso *isoengine.Engine
 }
 
 func (h *Handler) ok(c *gin.Context, data interface{}) {

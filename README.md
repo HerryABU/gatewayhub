@@ -20,6 +20,15 @@
 - 透传请求头，自动添加 `X-Forwarded-For` / `X-Real-IP` / `X-Forwarded-Proto`
 - 超时/错误处理：502 / 504 / 404 / 503
 
+### 路径隔离网关（显式配置 · 可降级）
+- **首段路由**：`/{服务名}/...` 精确匹配 `isolation.yaml` 中声明的服务，未命中直接 404（不猜测归属）
+- **三种模式**：`pass-through`（后端自己认前缀）/ `strip`（剥离前缀，可改 HTML-CSS 字面量）/ `isolated`（仅头层修正，**响应体一个字节都不改**）
+- **Cookie 帽子**：`A__session` 按服务加前缀，响应侧 `Path=/` 收紧为 `Path=/A`，多值逐条处理且不丢 `HttpOnly/Secure/SameSite`
+- **响应修正**：`Location` 按模式补前缀并屏蔽指向后端的绝对 URL；`Set-Cookie` 加帽；HTML/CSS 只改 `href=/src=/action=/url(` 这类带上下文字面量
+- **可控降级**：单服务连续失败自动熔断（其他服务不受影响），一条 API 即可把服务切到 `isolated`
+- **可观测**：按服务统计请求/4xx-5xx/改写命中/改写失败/熔断/重定向循环，日志按「后端 bug / 代理改写失败 / 配置错误」分类
+- 详见 [docs/isolation-gateway.md](docs/isolation-gateway.md)
+
 ### 健康检查（绿 / 橙 / 红状态条）
 - 每 30 秒主动探测各下级站点的 `/health` 端点（TCP 兜底）
 - 测量响应延迟：🟢 健康 / 🟠 降级（缓慢）/ 🔴 宕机 / ⚪ 未知
@@ -172,7 +181,17 @@ gatewayhub/
 │   ├── database/           # 数据库初始化 + 示例路由（无演示日志）
 │   ├── models/             # 数据模型
 │   ├── auth/               # bcrypt + JWT
-│   ├── proxy/              # 反向代理引擎（热加载）
+│   ├── proxy/              # 反向代理引擎（热加载，DB 路由）
+│   ├── isolation/          # 路径隔离网关（本轮新增，按职责分层）
+│   │   ├── config/         #   服务配置表：解析/校验/默认值/热加载
+│   │   ├── matcher/        #   首段匹配（不猜测归属）
+│   │   ├── forward/        #   转发路径与转发头（纯函数）
+│   │   ├── cookie/         #   Cookie 帽子（脱帽/加帽/Path 收紧）
+│   │   ├── respond/        #   Location 与 HTML-CSS 字面量改写
+│   │   ├── metrics/        #   按服务指标 + 重定向循环检测
+│   │   ├── breaker/        #   连续失败熔断
+│   │   ├── diag/           #   分类诊断日志 + 变更审计
+│   │   └── engine/         #   单循环执行器（拦截-修正-转发-修正）
 │   ├── health/             # 健康检查（绿/橙/红）
 │   ├── stats/              # 异步日志写入（数据库统计）
 │   ├── accesslog/          # 访问日志落盘（含请求头，按天/小时）
@@ -197,6 +216,7 @@ gatewayhub/
 | 分组 | 接口 |
 | :--- | :--- |
 | 建站向导 | `GET/POST /api/setup/status` `POST /api/setup/configure` |
+| 路径隔离网关 | `GET /api/isolation/services` `GET /api/isolation/metrics` `GET /api/isolation/audit` `PATCH /api/isolation/services/:name/mode` `POST /api/isolation/reload` |
 | 认证 | `POST /api/auth/login` `POST /api/auth/refresh` `PUT /api/auth/password` |
 | 路由 | `GET/POST /api/routes` `PUT/DELETE /api/routes/:prefix` `PATCH .../status` |
 | 统计 | `/api/stats/overview` `/api/stats/routes` `/api/stats/trend` `/api/stats/geo` `/api/stats/cleanup` |
@@ -248,6 +268,14 @@ backup:
 
 setup:
   allow_remote: false     # 建站向导是否允许远程访问（默认仅 localhost）
+
+isolation:                # 路径隔离网关（服务表在 isolation.yaml）
+  enabled: true
+  file: isolation.yaml
+  watch: true             # 文件变更热加载
+  watch_interval: 5
+  audit_file: logs/isolation-audit.log
+  trust_proxies: false    # 前面有可信反代才设 true（否则忽略客户端自带的转发头）
 
 health_check:
   interval: 30

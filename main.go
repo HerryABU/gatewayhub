@@ -20,6 +20,9 @@ import (
 	"gatewayhub/internal/geo"
 	"gatewayhub/internal/handlers"
 	"gatewayhub/internal/health"
+	isoconfig "gatewayhub/internal/isolation/config"
+	"gatewayhub/internal/isolation/diag"
+	isoengine "gatewayhub/internal/isolation/engine"
 	"gatewayhub/internal/proxy"
 	"gatewayhub/internal/router"
 	"gatewayhub/internal/security"
@@ -82,6 +85,42 @@ func main() {
 	}
 	log.Printf("已加载 %d 条路由", proxyMgr.Count())
 
+	// 路径隔离网关：显式配置表（isolation.yaml）+ 热加载 + 变更审计
+	var isoEngine *isoengine.Engine
+	var isoWatcher *isoconfig.Watcher
+	if cfg.Isolation.Enabled {
+		isoFile := cfg.Isolation.File
+		audit := diag.NewAudit(cfg.Isolation.AuditFile)
+		defer func() { _ = audit.Close() }()
+
+		table, err := isoconfig.Load(isoFile)
+		if err != nil {
+			// 配置错误不阻断启动：隔离网关暂不生效，其余功能照常（爆炸半径可控）
+			diag.Logf(diag.ConfigError, "", "隔离配置加载失败，隔离网关暂不生效: %v", err)
+			table = &isoconfig.Table{Source: isoFile}
+		}
+		isoEngine = isoengine.New(isoengine.Options{
+			Table:        table,
+			Audit:        audit,
+			TrustProxies: cfg.Isolation.TrustProxies,
+		})
+		if cfg.Isolation.Watch {
+			isoWatcher = isoconfig.NewWatcher(isoFile, table.Hash,
+				time.Duration(cfg.Isolation.WatchInterval)*time.Second)
+			isoWatcher.Start(func(t *isoconfig.Table, loadErr error) {
+				if loadErr != nil {
+					diag.Logf(diag.ConfigError, "", "隔离配置热加载失败（继续使用原配置）: %v", loadErr)
+					return
+				}
+				isoEngine.Reload(t, "watcher")
+			})
+		}
+		log.Printf("路径隔离网关已启用：%d 个服务（配置：%s，审计：%s）",
+			isoEngine.Count(), isoFile, cfg.Isolation.AuditFile)
+	} else {
+		log.Println("路径隔离网关未启用（isolation.enabled=false）")
+	}
+
 	// 健康检查器
 	checker := health.New(db, cfg.HealthCheck)
 	checker.Start()
@@ -99,7 +138,7 @@ func main() {
 	h := &handlers.Handler{
 		DB: db, Cfg: cfg, ConfigPath: *configPath,
 		Proxy: proxyMgr, Health: checker, Geo: geoResolver, Stats: writer,
-		Security: secMgr, Backup: backupMgr,
+		Security: secMgr, Backup: backupMgr, Iso: isoEngine,
 	}
 
 	// 已完成后建站向导则补齐演示数据（幂等）
@@ -149,6 +188,9 @@ func main() {
 	backupMgr.Stop()
 	if fileLogger != nil {
 		_ = fileLogger.Close()
+	}
+	if isoWatcher != nil {
+		isoWatcher.Stop()
 	}
 	log.Println("已退出")
 }

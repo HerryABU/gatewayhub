@@ -170,6 +170,10 @@ func (e *Engine) HasPrefix(first string) bool {
 	return m.Has(first)
 }
 
+// Active 表示隔离网关是否真的接管了路径空间（至少声明了一个服务）。
+// 未声明任何服务时保持 false：既有的部署前缀剥离/DB 路由行为完全不变。
+func (e *Engine) Active() bool { return e != nil && e.Count() > 0 }
+
 // Count 返回已配置的服务数量。
 func (e *Engine) Count() int {
 	e.mu.RLock()
@@ -304,6 +308,22 @@ func (e *Engine) Snapshot() []ServiceStatus {
 	}
 	sort.Slice(out, func(i, j int) bool { return strings.ToLower(out[i].Name) < strings.ToLower(out[j].Name) })
 	return out
+}
+
+// AuditRecent 返回最近的配置变更审计记录（供管理接口查询）。
+func (e *Engine) AuditRecent(n int) []diag.Entry {
+	if e == nil || e.audit == nil {
+		return nil
+	}
+	return e.audit.Recent(n)
+}
+
+// AuditPath 返回审计文件路径。
+func (e *Engine) AuditPath() string {
+	if e == nil || e.audit == nil {
+		return ""
+	}
+	return e.audit.Path()
 }
 
 // Metrics 返回纯指标快照。
