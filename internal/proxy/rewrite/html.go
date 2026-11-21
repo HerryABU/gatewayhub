@@ -104,6 +104,10 @@ func (rw *Rewriter) rewriteHTML(b []byte) []byte {
 	//    无论后端是否位于子路径（root）都注入——相对路径解析统一依赖它。
 	s = rw.injectBase(s)
 
+	// 6) 注入运行期前缀兜底脚本（fetch/XHR/WS/DOM 属性统一补前缀）。
+	//    它承担「JS 字面量不能乱改」的那部分职责：只改请求，不改数据。
+	s = rw.injectShim(s)
+
 	return []byte(s)
 }
 

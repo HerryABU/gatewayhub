@@ -100,12 +100,14 @@ func relPath(baseDir, target string) string {
 	return "./" + strings.Join(parts, "/")
 }
 
-// rewriteRootPathPrefixes 是需要重写的根相对「资源 / 完整 API」路径前缀。
-// 这些代表真实资源或完整 API 路径（如 /api/user、/assets/app.js、/static/logo.png），
-// 而非 axios 的相对端点（如 /setup/env-check）。后者若被重写，会与 axios 的 baseURL
-// 叠加成 /prefix/api/prefix/... 的双重前缀，故排除。
+// rewriteRootPathPrefixes 是需要在 JS 字面量层重写的根相对「资源」路径前缀。
+// 这些代表真实静态资源路径（如 /assets/app.js、/static/logo.png），一定按 URL 使用。
+//
+// ⚠️ 不要把 "/api" 加回来：JS 里 "/api/..." 既可能是请求 URL，也可能是请求体数据
+// （NVS /api/batch 的 path 字段就是这种），静态改写会污染业务数据。
+// API 前缀由注入的运行期 shim（shim.go）在发请求时补，只改请求不改数据。
 var rewriteRootPathPrefixes = []string{
-	"/api", "/assets", "/static", "/uploads", "/media", "/images",
+	"/assets", "/static", "/uploads", "/media", "/images",
 	"/img", "/fonts", "/css", "/js", "/public", "/dist", "/files",
 }
 
@@ -114,12 +116,7 @@ var rewriteFilePrefixes = []string{
 	"/favicon.", "/logo.", "/icon.", "/manifest.", "/robots.",
 }
 
-// apiRootPath 判断是否为「完整 API 路径」（JS 中按 document base 解析，可相对化）
-func isAPIRootPath(s string) bool {
-	return s == "/api" || strings.HasPrefix(s, "/api/")
-}
-
-// isRootPath 判断字符串是否为需要重写的「根相对资源 / API 路径」。
+// isRootPath 判断字符串是否为需要重写的「根相对资源」路径（不含 /api，理由见上）。
 func isRootPath(s string) bool {
 	if len(s) < 2 || s[0] != '/' {
 		return false

@@ -109,8 +109,9 @@ func TestRewriteHTML(t *testing.T) {
 		`url('./bg.png')`,
 		`url(./bg2.png)`,
 		`href="./login"`,
-		`fetch('./api/inline')`, // 内联 <script> 中的 API 路径相对化
-		`const base='./api'`,    // 内联 <script> 中的 baseURL
+		`data-gateway-prefix-shim="1"`, // 运行期前缀兜底脚本
+		`fetch('/api/inline')`,         // 内联 <script> 的 API 字面量不动（可能是数据）
+		`const base='/api'`,
 	}
 	for _, c := range checks {
 		if !contains(out, c) {
@@ -167,11 +168,11 @@ func TestRewriteJS(t *testing.T) {
 	in := `fetch("/api/site-info");axios.get('/api/categories');import("/assets/chunk.js");const base="/api";api.get('/setup/env-check');api.get("/auth/me");const x="/";window.location.href='/login';location.assign("/register");`
 	out := string(rw.rewriteJS([]byte(in)))
 	checks := []string{
-		`"./api/site-info"`,                // fetch API 路径相对化（document base）
-		`'./api/categories'`,               // axios API 路径相对化
+		`fetch("/api/site-info")`,          // API 字面量不动（可能被当请求体数据发给后端）
+		`axios.get('/api/categories')`,     // 同上：由运行期 shim 补前缀
 		`"/app/assets/chunk.js"`,           // 动态 import 资源保留前缀绝对（module 基准）
-		`const base="./api"`,               // baseURL 相对化
-		`api.get('/setup/env-check')`,      // 相对端点不改写（避免双重前缀）
+		`const base="/api"`,                // baseURL 不再相对化（避免污染数据/双重前缀）
+		`api.get('/setup/env-check')`,      // 相对端点不改写
 		`api.get("/auth/me")`,              // 相对端点不改写
 		`const x="/"`,                      // 单个 / 不重写
 		`location.href='/app/login'`,       // 整页导航保留前缀绝对
@@ -193,9 +194,7 @@ func TestIsRootPath(t *testing.T) {
 		in   string
 		want bool
 	}{
-		// 资源 / 完整 API 前缀：重写
-		{"/api", true},
-		{"/api/user", true},
+		// 资源前缀：重写
 		{"/assets/app.js", true},
 		{"/static/logo.png", true},
 		{"/uploads/a.jpg", true},
@@ -213,7 +212,11 @@ func TestIsRootPath(t *testing.T) {
 		{"/icon.svg", true},
 		{"/manifest.json", true},
 		{"/robots.txt", true},
-		// axios 相对端点 / 业务路由：不重写（避免与 baseURL 双重前缀）
+		// API 前缀 / axios 相对端点 / 业务路由：都不在 JS 字面量层重写
+		// （"/api" 既可能是 URL 也可能是请求体数据，静态改写会污染业务数据，
+		//  改由运行期 shim 在发请求时补前缀）
+		{"/api", false},
+		{"/api/user", false},
 		{"/setup/env-check", false},
 		{"/auth/me", false},
 		{"/login", false},
@@ -234,8 +237,8 @@ func TestIsRootPath(t *testing.T) {
 }
 
 func TestNeedsRewrite(t *testing.T) {
-	if !needsJSRewrite([]byte(`fetch("/api/x")`)) {
-		t.Error("含 /api 应命中")
+	if needsJSRewrite([]byte(`fetch("/api/x")`)) {
+		t.Error("只有 /api 不应命中（API 由运行期 shim 处理）")
 	}
 	if !needsJSRewrite([]byte(`import("/assets/x.js")`)) {
 		t.Error("含 /assets 应命中")
@@ -421,4 +424,36 @@ func TestModify(t *testing.T) {
 func mustReqWithGWPath(p string) *http.Request {
 	req, _ := http.NewRequest(http.MethodGet, "http://127.0.0.1:8080/"+p, nil)
 	return WithGWPath(req, p)
+}
+
+// TestPrefixShim 校验运行期前缀兜底脚本：注入位置、幂等、前缀编码与关键钩子齐全。
+func TestPrefixShim(t *testing.T) {
+	rw := New("go-nvs", "", "")
+	html := `<html><head><script type="module" src="./assets/index.js"></script></head><body></body></html>`
+	out := string(rw.rewriteHTML([]byte(html)))
+
+	if strings.Count(out, "data-gateway-prefix-shim") != 1 {
+		t.Fatalf("shim 应恰好注入一次:\n%s", out)
+	}
+	if !contains(out, `var P="/go-nvs";`) {
+		t.Errorf("shim 前缀未以 JSON 字符串形式注入:\n%s", out)
+	}
+	// 必须早于应用脚本执行（否则首屏请求已经漏出去）
+	if strings.Index(out, "data-gateway-prefix-shim") > strings.Index(out, `type="module"`) {
+		t.Errorf("shim 必须在应用脚本之前:\n%s", out)
+	}
+	for _, hook := range []string{"window.fetch", "XMLHttpRequest.prototype.open", "navigator.sendBeacon", "history.pushState", "Element.prototype.setAttribute", "HTMLScriptElement"} {
+		if !contains(out, hook) {
+			t.Errorf("shim 缺少钩子 %q", hook)
+		}
+	}
+	// 二次注入幂等（同一个响应被重复处理不应叠两份脚本）
+	if again := string(rw.rewriteHTML([]byte(out))); strings.Count(again, "data-gateway-prefix-shim") != 1 {
+		t.Errorf("shim 重复注入:\n%s", again)
+	}
+	// 空前缀不注入
+	empty := string(New("", "", "").rewriteHTML([]byte(html)))
+	if contains(empty, "data-gateway-prefix-shim") {
+		t.Errorf("空前缀不应注入 shim:/n%s", empty)
+	}
 }

@@ -2,9 +2,16 @@ package rewrite
 
 import "bytes"
 
+// rewriteJS 只改写「资源类」根绝对路径（/assets、/static、/uploads…）。
+//
+// 为什么不改写 /api 字面量：JS 里 "/api/..." 既可能是请求 URL，也可能是
+// **请求体数据**（NVS 的 /api/batch 就是 {path:"/api/nav-layout"} 这类结构）。
+// 对它做字面量改写会污染业务数据（实测后端回 "path 必须以 /api/ 开头"，
+// 11 个子请求全挂、顶部导航整条消失）。API 前缀改由注入的运行期 shim
+// 在真正发请求时补（见 shim.go），静态层只碰确定的资源 URL。
 func (rw *Rewriter) rewriteJS(b []byte) []byte {
 	s := string(b)
-	// 1) 单/双引号「以 / 开头」的字符串字面量（根相对路径）
+	// 1) 单/双引号「以 / 开头」的字符串字面量（根相对资源路径）
 	s = jsRootPathRe.ReplaceAllStringFunc(s, func(m string) string {
 		sub := jsRootPathRe.FindStringSubmatch(m)
 		if len(sub) != 4 {
@@ -13,9 +20,6 @@ func (rw *Rewriter) rewriteJS(b []byte) []byte {
 		content := sub[2]
 		if !isRootPath(content) {
 			return m
-		}
-		if isAPIRootPath(content) {
-			return sub[1] + rw.rewriteRelative(content) + sub[3]
 		}
 		return sub[1] + rw.rewritePath(content) + sub[3]
 	})
@@ -27,9 +31,6 @@ func (rw *Rewriter) rewriteJS(b []byte) []byte {
 		}
 		if !isRootPath(sub[1]) {
 			return m
-		}
-		if isAPIRootPath(sub[1]) {
-			return "`" + rw.rewriteRelative(sub[1]) + "`"
 		}
 		return "`" + rw.rewritePath(sub[1]) + "`"
 	})
