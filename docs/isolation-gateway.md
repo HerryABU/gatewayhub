@@ -139,7 +139,8 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
 （等价于 nginx `sub_filter` / Apache `mod_proxy_html`，但只认挂载点声明，不做全文替换）：
 
 1. **静态改写**：HTML 的 `href/src/action` 与 CSS 的 `url()` 补前缀；`data-src` 这类
-   「延迟地址」故意不改（它会被前端再拼一次基准，见第 3 点）。
+   「延迟地址」故意不改（它会被前端再拼一次基准，见第 3 点）；**JS 字面量一律不碰**
+   （只改整页导航 `location.href|assign|replace`）。原因见下面的「为什么必须分层」。
 2. **挂载点声明改写**：把内联运行期配置里值为 `"/"` 的挂载点改成 `/{服务名}` ——
    匹配 `base_path` / `basePath` / `basename` / `baseURL` / `publicPath` / `asset_prefix` / `router_base`，
    `key: "/"` 与 `"key":"/"` 都认。SPA 的路由 basename、axios baseURL、运行时资源前缀都从这里取值，
@@ -151,11 +152,17 @@ curl -X PATCH http://127.0.0.1:8088/api/isolation/services/SPA/mode \
    `fetch`、`XMLHttpRequest`（axios 走它）、`sendBeacon`、`EventSource`、`WebSocket`、
    `history.pushState/replaceState`，以及 DOM 的 `src`/`href`（`setAttribute` + 属性 setter）。
 
-为什么必须分层：**JS 里以 `/` 开头的字符串既可能是 URL，也可能是请求体数据**。
-实测 NVS（`/api/batch` 的请求体是 `{id,method,path}`，`path` 值形如 `/api/nav-layout`）——
-早期实现把这类字面量也改写成 `./api/nav-layout`，后端直接回 `path 必须以 /api/ 开头`，
-11 个子请求全失败，顶部导航整条消失。所以**静态层只改资源类字面量与挂载点声明**，
-**API 前缀一律交给 shim 在请求发出时补**：只碰请求，不碰数据。
+为什么必须分层：**JS 里以 `/` 开头的字符串既可能是 URL，也可能是请求体数据，文本层无法判断**。
+已经真实踩中两次：
+
+- NVS：`/api/batch` 的请求体是 `{id,method,path}`，`path` 值形如 `/api/nav-layout`。
+  改成 `./api/nav-layout` 后后端回 `path 必须以 /api/ 开头`，11 个子请求全失败，顶部导航整条消失；
+- openlist：接口写成 `` $.get(`/public/plugins`) ``，而 `/public` 很像静态资源目录。
+  加了前缀后与 axios 的 `baseURL` 叠加成 `/openlist/api/openlist/public/plugins`，
+  所有接口拿到 index.html（模块 MIME 报错、设置页报 `获取设置失败`）。
+
+所以结论是**文本层不猜**：静态层只改 HTML 属性、CSS 与整页导航；API 与运行时资源地址
+一律交给 shim 在请求发出时补，只碰请求、不碰数据。
 
 隔离引擎（`strip` + `html_rewrite`）与数据库路径路由（`/前缀/*`）用的是同一套准备逻辑，行为一致。
 
