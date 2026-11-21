@@ -1,0 +1,4 @@
+# GitHub Actions 的 run: | 里是 bash，换行必须是 LF。
+# 若在 core.autocrlf=false 的机器上以 CRLF 提交，Linux runner 会报
+# "$'\r': command not found"，因此显式锁定，不依赖各人本地配置。
+.github/workflows/*.yml text eol=lf
