@@ -35,6 +35,20 @@ func (rt *runtime) modifyResponse(resp *http.Response) error {
 		}
 	}
 
+	// 嵌套链的对外前缀：优先取内层写回的链，否则用「本跳入站链 + 本服务前缀」拼出。
+	// 与代理链路共用 X-GatewayHub-Prefix-Chain；最外层负责把内部头摘掉。
+	inbound := rewrite.SanitizeChain(rewrite.InboundChain(resp.Request))
+	fullRaw := rewrite.SanitizeChain(resp.Header.Get(rewrite.PrefixChainHeader))
+	if fullRaw == "" {
+		fullRaw = rewrite.JoinChain(inbound, strings.Trim(cfg.Prefix, "/"))
+	}
+	fullPrefix := "/" + fullRaw
+	if inbound == "" {
+		defer resp.Header.Del(rewrite.PrefixChainHeader)
+	} else {
+		resp.Header.Set(rewrite.PrefixChainHeader, fullRaw)
+	}
+
 	// 熔断结算：5xx 视为后端失败，其余视为后端仍可用
 	if resp.StatusCode >= 500 {
 		rt.tripOnFailure()
@@ -46,7 +60,7 @@ func (rt *runtime) modifyResponse(resp *http.Response) error {
 	if loc := resp.Header.Get("Location"); loc != "" {
 		next, changed := respond.RewriteLocation(loc, respond.LocationOptions{
 			Mode:           cfg.Mode,
-			Prefix:         cfg.Prefix,
+			Prefix:         fullPrefix,
 			BackendHost:    cfg.Host,
 			FixPassThrough: cfg.PassThroughFix,
 		})
@@ -88,7 +102,7 @@ func (rt *runtime) modifyResponse(resp *http.Response) error {
 			resp.ContentLength, cfg.MaxRewriteBytes, requestPath(resp))
 		return nil
 	}
-	rt.rewriteBody(resp, cfg, cnt, kind, enc)
+	rt.rewriteBody(resp, cfg, cnt, kind, enc, fullPrefix)
 	return nil
 }
 
@@ -198,7 +212,7 @@ func bodyEligible(resp *http.Response) bool {
 
 // rewriteBody 读入（必要时解压）→ 字面量改写 → 明文写出。
 // 任何一步失败都恢复原始字节原样透传：代理宁可不改，也不能把页面改坏。
-func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *metrics.Counters, kind respond.Kind, enc string) {
+func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *metrics.Counters, kind respond.Kind, enc, prefix string) {
 	// 先按上限多读 1 字节判断是否超限；超限时把已读片段与剩余流拼回去，绝不截断响应
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, cfg.MaxRewriteBytes+1))
 	if err != nil {
@@ -224,13 +238,13 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 		restoreBody(resp, buf, origin)
 		return
 	}
-	out, hits := respond.RewriteLiterals(decoded, kind, cfg.Prefix)
+	out, hits := respond.RewriteLiterals(decoded, kind, prefix)
 	// HTML 额外做「挂载准备」：改写运行期挂载点声明（base_path/basename/baseURL = "/"）
 	// 并注入运行期前缀兜底（fetch/XHR/WS/导航/DOM 属性补前缀）。
 	// 否则 fetch('/api/x')、axios('/api') 与运行时拼的资源地址会绕过前缀打到网关根路径
 	// （NVS 实测：顶部导航整条消失；openlist 实测：白屏 + 全部接口 404）。
 	if kind == respond.KindHTML {
-		if prepared, n := rewrite.PrepareHTML(cfg.Prefix, out); n > 0 {
+		if prepared, n := rewrite.PrepareHTML(prefix, out); n > 0 {
 			out = prepared
 			hits += n
 		}
@@ -247,7 +261,9 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 	// 只删不补会让浏览器凭启发式规则长期缓存旧副本，网关改写逻辑一升级就与客户端脱节
 	// （实测：旧版 JS 字面量改写留下的畸形 JS 被 Edge 永久缓存，接口全落空）。
 	resp.Header.Del("Content-MD5")
-	if rewrite.MarkRewritten(resp.Request, resp, out) {
+	// scope 用服务名：嵌套链里多个跳都会改写同一份字节，
+	// ETag 只取内容 hash 时外层的 If-None-Match 会在内层误命中 304。
+	if rewrite.MarkRewrittenScope(resp.Request, resp, out, cfg.Name) {
 		cnt.HTMLHits.Add(int64(hits))
 		return
 	}

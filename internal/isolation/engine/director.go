@@ -2,9 +2,11 @@ package engine
 
 import (
 	"net/http/httputil"
+	"strings"
 
 	"gatewayhub/internal/isolation/config"
 	"gatewayhub/internal/isolation/forward"
+	"gatewayhub/internal/proxy/rewrite"
 )
 
 // rewrite 是请求侧的「拦截—修正」：路径、Host、转发头、Cookie 脱帽一次性完成
@@ -56,7 +58,14 @@ func (rt *runtime) rewrite(pr *httputil.ProxyRequest) {
 		st.counters.CookiesDropped.Add(int64(res.Dropped))
 	}
 
-	// 6) 需要改写响应体时只要 gzip：便于解码改写后以明文输出（避免压缩乱码）
+	// 6) 嵌套链：把对外前缀逐跳累加（与普通反代共用同一个头）。
+	//    最内层据此把 <base>/资源路径写到完整链前缀下，避免多跳后资源 404。
+	inbound := rewrite.SanitizeChain(pr.In.Header.Get(rewrite.PrefixChainHeader))
+	rewrite.WithInboundChain(pr.Out, inbound)
+	pr.Out.Header.Set(rewrite.PrefixChainHeader,
+		rewrite.JoinChain(inbound, strings.Trim(cfg.Prefix, "/")))
+
+	// 7) 需要改写响应体时只要 gzip：便于解码改写后以明文输出（避免压缩乱码）
 	if cfg.BodyRewriteEnabled() {
 		out.Header.Set("Accept-Encoding", "gzip")
 	}
