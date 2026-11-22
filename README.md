@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.0**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.1**
 
 ---
 
@@ -16,6 +16,7 @@
 - **子域名路由**：`java-order.localhost:8088/user` 与 `/{prefix}/user` 双模式并存，子域名命中时**零路径重写、零 `<base>` 注入**，纯透明转发（速度=源站）；子域名优先级最高——连后端自己的 `/api/*`、`/assets/*` 也直接转发，不会被网关同名路径吞掉
 - **多级路径前缀**（最长前缀优先）：`v2/beta` 可覆盖 `v2`，段边界对齐
 - **WebSocket** 透明转发（HMR / 推送 / 聊天长连接不超时）
+- **嵌套自指链**：`/中转/目标/服务路由` 多层转发，每一跳都能解开 gzip/deflate → 改写 → 按原编码回包；ETag 按跳隔离，br/zstd 原样透传（详见 [docs/isolation-gateway.md](docs/isolation-gateway.md) §5.4）
 - 后端地址支持 `:8080`、`:8080/api/v1`、完整 URL（**含自定义端口**，如 `http://example.com:8443`）及 **`${ENV}` 环境变量**（如 `http://${ORDER_HOST}:8080`，未设置时创建路由报错）
 - **外部网站代理**：完整 URL 目标天然支持（含 HTTPS），健康检查同样按 scheme/host 探测
 - **响应内容「绝对改相对」重写**：HTML 属性/内联样式根绝对路径 → 文档相对路径（`./x`），并注入 `<base href="/{prefix}/">` 兜底解析；外链 CSS 的 `url()/@import` 按 CSS 文件自身位置换算相对路径；JS **只改整页导航**（`location.href|assign|replace`），其余字面量一律不动——文本层判不出「URL 还是请求体数据」，实测已踩中两次（NVS 的 `{path:"/api/x"}`、openlist 的 `$.get("/public/plugins")`），这类地址全部交给运行期 shim 在发请求时补前缀
