@@ -30,17 +30,32 @@ func validNameByte(b byte) bool {
 }
 
 // validateService 校验单条服务的语义约束（结构性问题已在 Build 中处理）。
+//
+// 服务名允许嵌套（多段）：`apps/openlist` 表示对外前缀 `/apps/openlist`。
+// 但每一段都必须是合法路径段 —— 否则 `..`、空段、URL 转义字符会把前缀匹配
+// 与 Cookie Path 一起带歪。
 func validateService(s *Service) error {
-	if s.Name == "." || s.Name == ".." || strings.Contains(s.Name, "..") {
-		return fmt.Errorf("%q: 服务名不能包含路径穿越片段", s.Name)
-	}
 	for i := 0; i < len(s.Name); i++ {
-		if !validNameByte(s.Name[i]) {
-			return fmt.Errorf("%q: 服务名含非法字符 %q（只允许字母数字与 - _ . ~）", s.Name, s.Name[i])
+		b := s.Name[i]
+		if b == '/' {
+			continue // 段分隔，逐段校验在下面
+		}
+		if !validNameByte(b) {
+			return fmt.Errorf("%q: 服务名含非法字符 %q（只允许字母数字与 - _ . ~，可用 / 分层）", s.Name, b)
 		}
 	}
-	if reservedNames[strings.ToLower(s.Name)] {
-		return fmt.Errorf("%q: 服务名与网关自身路径保留字冲突（%s）", s.Name, strings.Join(reservedNameList(), ", "))
+	segs := strings.Split(s.Name, "/")
+	for i, seg := range segs {
+		if seg == "" {
+			return fmt.Errorf("%q: 服务名不能有空路径段（如 /apps//x 或结尾多一个 /）", s.Name)
+		}
+		if seg == "." || seg == ".." {
+			return fmt.Errorf("%q: 服务名不能包含路径穿越片段 %q", s.Name, seg)
+		}
+		if i == 0 && reservedNames[strings.ToLower(seg)] {
+			return fmt.Errorf("%q: 服务名首段与网关自身路径保留字冲突（%s）",
+				s.Name, strings.Join(reservedNameList(), ", "))
+		}
 	}
 	if s.CookieHat != "" && !validCookieToken(s.CookieHat) {
 		return fmt.Errorf("%q: cookie_hat %q 含非法字符（必须能作为 Cookie 名前缀）", s.Name, s.CookieHat)

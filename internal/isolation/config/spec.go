@@ -142,6 +142,7 @@ func (f *File) Build() ([]*Service, error) {
 	f.normalizeDefaults()
 	var issues []string
 	seen := make(map[string]int, len(f.Services))
+	hats := make(map[string]string, len(f.Services)) // 帽子里也会重复：嵌套名的 "." 化可能撞名
 	out := make([]*Service, 0, len(f.Services))
 
 	for i, sp := range f.Services {
@@ -155,6 +156,18 @@ func (f *File) Build() ([]*Service, error) {
 			continue
 		}
 		seen[key] = i
+		// 帽子重复 = 两个服务的 Cookie 互相污染（浏览器只看 name+domain+path，
+		// 但脱帽逻辑靠帽子前缀识别归属，撞了就会把别人的凭据脱掉）。
+		if svc.CookieHat != "" {
+			hk := strings.ToLower(svc.CookieHat)
+			if prev, dup := hats[hk]; dup {
+				issues = append(issues, fmt.Sprintf("services[%d] %q: cookie_hat 与 %q 重复（%q）——"+
+					"嵌套名里的 / 会被换成 . 推导帽子，请为该服务显式指定 cookie_hat",
+					i, svc.Name, prev, svc.CookieHat))
+				continue
+			}
+			hats[hk] = svc.Name
+		}
 		out = append(out, svc)
 	}
 	if len(issues) > 0 {
@@ -252,11 +265,15 @@ func (f *File) buildOne(sp Spec, idx int, issues *[]string) *Service {
 
 // resolveHat 决定 Cookie 帽子前缀：显式配置优先；未配置时用 name + 后缀；
 // 显式空串表示明确「不加帽」（不做 Cookie 隔离）。
+// resolveHat 推导 Cookie 帽子前缀。
+//
+// 嵌套服务（apps/openlist）不能把 "/" 直接拼进 Cookie 名（RFC 6265 token 不允许），
+// 这里换成 "."：apps.openlist__。这跟名字里的 "." 视觉一致，也不会引入新的转义规则。
 func resolveHat(explicit *string, name, suffix string) string {
 	if explicit != nil {
 		return strings.TrimSpace(*explicit)
 	}
-	return name + suffix
+	return strings.ReplaceAll(name, "/", ".") + suffix
 }
 
 // cleanPrefixes 去空白、去重、去掉空项，保留声明顺序。

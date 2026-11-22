@@ -214,3 +214,57 @@ func TestWatcherReloadsOnChange(t *testing.T) {
 		t.Fatal("热加载超时未触发")
 	}
 }
+
+// TestBuildNestedName 嵌套服务名：/apps/openlist，Cookie 帽子把 / 换成 .。
+func TestBuildNestedName(t *testing.T) {
+	svcs, err := (&File{Services: []Spec{
+		{Name: "apps/openlist", Target: ":9200", Mode: "strip"},
+		{Name: "/apps/minio/", Target: ":9201", Mode: "strip"}, // 前后多余斜杠应被裁掉
+	}}).Build()
+	if err != nil {
+		t.Fatalf("嵌套服务名应被接受: %v", err)
+	}
+	if svcs[0].Name != "apps/openlist" || svcs[0].Prefix != "/apps/openlist" {
+		t.Fatalf("嵌套前缀构建错误: name=%q prefix=%q", svcs[0].Name, svcs[0].Prefix)
+	}
+	if svcs[0].CookieHat != "apps.openlist__" {
+		t.Fatalf("嵌套帽子应把 / 换成 .：got %q", svcs[0].CookieHat)
+	}
+	if svcs[1].Name != "apps/minio" {
+		t.Fatalf("首尾斜杠应被裁掉: got %q", svcs[1].Name)
+	}
+}
+
+// TestBuildNestedNameIssues 嵌套名的非法形态必须一次性报全。
+func TestBuildNestedNameIssues(t *testing.T) {
+	cases := []struct {
+		name string
+		want string
+	}{
+		{"apps//x", "空路径段"},
+		{"apps/../x", "路径穿越"},
+		{"api/apps", "保留字"},
+		{"apps/open list", "非法字符"},
+	}
+	for _, c := range cases {
+		_, err := (&File{Services: []Spec{{Name: c.name, Target: ":9200"}}}).Build()
+		if err == nil {
+			t.Errorf("%q 应被拒绝", c.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q 的错误信息应包含 %q，实际: %v", c.name, c.want, err)
+		}
+	}
+}
+
+// TestBuildHatCollision 嵌套名 "." 化后撞帽必须报错（否则两服务互相脱帽）。
+func TestBuildHatCollision(t *testing.T) {
+	_, err := (&File{Services: []Spec{
+		{Name: "apps/openlist", Target: ":9200"},
+		{Name: "apps.openlist", Target: ":9201"},
+	}}).Build()
+	if err == nil || !strings.Contains(err.Error(), "cookie_hat") {
+		t.Fatalf("撞帽应报错，实际: %v", err)
+	}
+}

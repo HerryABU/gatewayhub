@@ -18,12 +18,14 @@ import (
 	"time"
 
 	"gatewayhub/internal/accesslog"
+	"gatewayhub/internal/hopguard"
 	"gatewayhub/internal/isolation/breaker"
 	"gatewayhub/internal/isolation/config"
 	"gatewayhub/internal/isolation/diag"
 	"gatewayhub/internal/isolation/forward"
 	"gatewayhub/internal/isolation/matcher"
 	"gatewayhub/internal/isolation/metrics"
+	"gatewayhub/internal/target"
 )
 
 // Options 是引擎依赖注入项（全部可空，缺省时内部自建）。
@@ -37,6 +39,11 @@ type Options struct {
 	Logger *accesslog.FileLogger
 	// TrustProxies 表示前面是否还有可信反代（决定客户端 IP 是否取 XFF/X-Real-IP）。
 	TrustProxies bool
+	// SelfPort 是网关自身监听端口：用于识别「target 指向自己」的自指服务并告警。
+	// 0 表示不识别（仍受跳数上限保护）。
+	SelfPort int
+	// MaxHops 是链式转发最大跳数（自指 + 嵌套），0 用 hopguard 默认值。
+	MaxHops int
 }
 
 // Engine 是隔离网关实例。
@@ -51,6 +58,10 @@ type Engine struct {
 	loop    *metrics.LoopDetector
 	pool    *transportPool
 	logger  *accesslog.FileLogger
+	// hops 限制「服务 target 指向网关自身」时的链式转发深度（自指/嵌套）。
+	hops *hopguard.Guard
+	// selfPort 是网关自身端口，仅用于自指服务告警；0 表示不识别。
+	selfPort int
 
 	loopInjected bool
 	// trustProxies 决定客户端 IP 是否取 XFF/X-Real-IP（前面有可信反代时才可开）
@@ -73,6 +84,8 @@ func New(opts Options) *Engine {
 		logger:       opts.Logger,
 		trustProxies: opts.TrustProxies,
 		guard:        newSelfLoopGuard(selfLoopWindow),
+		hops:         hopguard.New(opts.MaxHops),
+		selfPort:     opts.SelfPort,
 	}
 	if e.metrics == nil {
 		e.metrics = metrics.NewRegistry()
@@ -107,7 +120,34 @@ func (e *Engine) apply(tbl *config.Table) {
 	if !e.loopInjected {
 		e.loop = metrics.NewLoopDetector(tbl.Loop.Threshold, time.Duration(tbl.Loop.Window)*time.Second)
 	}
+	selfPort := e.selfPort
+	maxHops := e.hops.Max()
 	e.mu.Unlock()
+
+	e.warnSelf(tbl, selfPort, maxHops)
+}
+
+// warnSelf 对「target 指向网关自身」的服务告警。
+//
+// 自指是合法用法（把控制台、另一个前缀的站点挂到新前缀下；迁移期做旧地址别名），
+// 但必须让运维知道两件事：这条链路会再进一次网关（所以嵌套的前缀必须存在，
+// 否则会 404），以及来回绕的深度由跳数上限兜底。
+func (e *Engine) warnSelf(tbl *config.Table, selfPort, maxHops int) {
+	if selfPort <= 0 || tbl == nil {
+		return
+	}
+	var selfs []string
+	for _, svc := range tbl.Services {
+		if svc.Enabled && target.IsSelf(svc.Backend, selfPort, "") {
+			selfs = append(selfs, svc.Name)
+		}
+	}
+	if len(selfs) == 0 {
+		return
+	}
+	diag.Logf(diag.ConfigError, "", "检测到 %d 个自指服务（target 指向网关自身 :%d）：%s；"+
+		"链路会再进一次网关，链式跳数上限 %d，超过即 508",
+		len(selfs), selfPort, strings.Join(selfs, ", "), maxHops)
 }
 
 // Reload 用新表替换运行时配置，并写审计（FR-4：变更可审计）。
@@ -306,6 +346,18 @@ func (e *Engine) serve(w *recorder, r *http.Request) string {
 		writeJSON(w, http.StatusServiceUnavailable, "service disabled")
 		return cfg.Prefix
 	}
+
+	// 自指/嵌套：跳数超上限直接 508，不再把请求推给自己。
+	// 放在熔断之前 —— 绕圈不是后端故障，不该把服务熔断掉。
+	hops, ok := e.hops.Next(r.Header)
+	if !ok {
+		cnt.LoopAlerts.Add(1)
+		diag.Logf(diag.LoopWarning, cfg.Name, "转发跳数超过上限 %d，判定为自指死循环: %s %s",
+			e.hops.Max(), r.Method, r.URL.Path)
+		writeJSON(w, http.StatusLoopDetected, "loop detected: 转发跳数超过上限")
+		return cfg.Prefix
+	}
+	hopguard.Stamp(r.Header, hops)
 
 	// 熔断打开：直接降级，不再排队占用后端连接（NFR-4）
 	if !rt.breaker.Allow() {

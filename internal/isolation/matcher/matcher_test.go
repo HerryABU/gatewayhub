@@ -125,3 +125,54 @@ func TestOwnerKnownAbsPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestLookupNested 嵌套服务名（多段前缀）：/apps/openlist → 后端 /apps/openlist。
+func TestLookupNested(t *testing.T) {
+	tbl, err := (&config.File{Services: []config.Spec{
+		{Name: "apps", Target: ":9101", Mode: "strip"},
+		{Name: "apps/openlist", Target: ":9102", Mode: "strip"},
+		{Name: "apps/openlist/api", Target: ":9103", Mode: "strip"},
+	}}).Build()
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	tb := New(tbl)
+
+	cases := []struct {
+		path string
+		name string
+		rest string
+		ok   bool
+	}{
+		{"/apps/openlist", "apps/openlist", "", true},
+		{"/apps/openlist/", "apps/openlist", "/", true},
+		{"/apps/openlist/admin", "apps/openlist", "/admin", true},
+		{"/apps/openlist/api/v1", "apps/openlist/api", "/v1", true}, // 深前缀优先
+		{"/apps/other", "apps", "/other", true},                     // 回退浅前缀
+		{"/apps", "apps", "", true},
+		{"/appsX/other", "", "", false},                 // 段边界：不命中 /apps
+		{"/apps/openlistX", "apps", "/openlistX", true}, // 段边界：归 /apps，不归 /apps/openlist
+		{"/app/other", "", "", false},
+	}
+	for _, c := range cases {
+		svc, rest, ok := tb.Lookup(c.path)
+		if ok != c.ok {
+			t.Errorf("Lookup(%q) ok=%v, want %v", c.path, ok, c.ok)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		if svc.Name != c.name || rest != c.rest {
+			t.Errorf("Lookup(%q) = (%s,%q), want (%s,%q)", c.path, svc.Name, rest, c.name, c.rest)
+		}
+	}
+
+	// 嵌套服务的首段同样归业务所有：部署前缀剥离不能吃掉 /apps
+	if !tb.Has("apps") {
+		t.Error("Has(apps) 应为 true（存在 apps/openlist）")
+	}
+	if tb.Has("app") {
+		t.Error("Has(app) 应为 false")
+	}
+}

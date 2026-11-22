@@ -92,7 +92,11 @@ func main() {
 	writer.Start()
 
 	// 反向代理管理器（内存路由表）
-	proxyMgr := proxy.NewManager(db, writer, cfg.Server.BaseDomain)
+	// SelfInfo 让管理器能识别「target 指向网关自身」的自指路由，并限制链式转发跳数。
+	proxyMgr := proxy.NewManager(db, writer, cfg.Server.BaseDomain, proxy.SelfInfo{
+		Port:    cfg.Server.Port,
+		MaxHops: cfg.Server.MaxHops,
+	})
 	// 访问日志落盘（含请求头，类别/天/小时 组织，与 NVS 同结构），失败不阻塞转发
 	var fileLogger *accesslog.FileLogger
 	if cfg.AccessLog.Enabled && cfg.AccessLog.Dir != "" {
@@ -133,6 +137,8 @@ func main() {
 			Audit:        audit,
 			Logger:       fileLogger, // 隔离链路与普通反代共用同一个访问日志写入器
 			TrustProxies: cfg.Isolation.TrustProxies,
+			SelfPort:     cfg.Server.Port, // 自指服务识别（target 指向网关自身）
+			MaxHops:      cfg.Server.MaxHops,
 		})
 		if cfg.Isolation.Watch {
 			isoWatcher = isoconfig.NewWatcher(isoFile, table.Hash,
