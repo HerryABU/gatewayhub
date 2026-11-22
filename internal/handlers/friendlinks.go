@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -117,7 +118,7 @@ func (h *Handler) saveFriendLinks(links []FriendLink) error {
 func newLinkID() string {
 	b := make([]byte, 6)
 	if _, err := rand.Read(b); err != nil {
-		return fmt.Sprintf("link-%d", len(b))
+		return fmt.Sprintf("link-%d", time.Now().UnixNano())
 	}
 	return "link-" + hex.EncodeToString(b)
 }
