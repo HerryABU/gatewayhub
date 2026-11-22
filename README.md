@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.8**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.9**
 
 ---
 
@@ -168,11 +168,23 @@ cd web && npm install && npm run dev     # 监听 :5173，代理 /api 到 :8088
 
 - **IP 库已嵌入二进制**：`ip2region.xdb`（11MB）编译进 `gatewayhub.exe`，运行时若 `data/ip2region.xdb` 缺失会自动解包；已存在（如用户自定义更新）则原样保留。
 - **数据库**：默认 `data/gateway.db`，目录不存在时自动创建。
-- **访问日志（含完整请求头）**：默认 `logs/`，按 天/小时 组织，每行一条 JSON：
+- **访问日志（与 NVS 同构）**：默认 `log/`，按 `类别 / 天 / 小时` 组织，每行一条 JSON（JSONL）：
   ```
-  logs/2026-08-25/17.log
+  log/requests/2026-11-22/15.log      # 访问日志
+  log/database/2026-11-22/15.log      # 预留：数据库日志（同一条归档链）
+  log/archive/daily|weekly|monthly|yearly/
   ```
-  含 `time / method / path / status / latency_ms / client_ip / user_agent / route_prefix / headers`（完整请求头）。可用 `access_log.enabled` / `access_log.dir` 关闭或改目录。
+  字段与 NVS 的 `log/requests/<date>/<HH>.log` 完全对齐：`timestamp`（`2006-01-02 15:04:05`）、`user_id`（网关恒 0）、`method`、`path`、`query`、`ip`、`ua`、`status`、`size`、`latency`、`headers`、`body`；网关另加 `route_prefix`（命中的服务）与 `kind`（`path` / `subdomain` / `isolation`）。
+
+  隔离网关（`/openlist/` 这类）与普通反代**共用同一个写入器**，未匹配 404、服务禁用、熔断降级也会记一条，日志不再有缺口。
+
+- **日志分层归档（对齐 NVS 的 logarchive）**：日包 7z → 周包 tar.gz → 月包 tar.gz → 年包 tar.xz，启动即跑一次、之后按 `access_log.archive.interval`（默认 24h）循环；幂等（产物比源新则跳过），缺 7z 时日包自动降级为纯 Go tar.gz。也可手动触发：
+
+  ```bash
+  gatewayhub.exe -archive       # 只归档一轮后退出，适合放进系统计划任务
+  ```
+
+- 相关开关：`access_log.enabled` / `access_log.dir` / `access_log.body` / `access_log.redact_sensitive` / `access_log.archive.*`。
 - 地图 GeoJSON（中国/世界）已随前端产物内嵌进二进制。
 
 ---
@@ -275,9 +287,15 @@ geo:
   enabled: true
   db_path: data/ip2region.xdb  # 缺失时从二进制自动解包
 
-access_log:                # 访问日志落盘（含请求头，按天/小时）
+access_log:                # 访问日志落盘（与 NVS 同构：类别/天/小时，JSONL）
   enabled: true
-  dir: logs
+  dir: log                # 根目录 → log/requests/<date>/<HH>.log
+  body: true              # 记录请求体片段（≤64KB；multipart 只记占位符）
+  redact_sensitive: false # true 时落盘前脱敏 Cookie/Authorization/token 类字段（生产建议开）
+  archive:                # 分层归档：日 7z → 周/月 tar.gz → 年 tar.xz
+    enabled: true
+    dir: ""               # 空则 {dir}/archive
+    interval: 24h
 
 security:                 # 安全防护
   enabled: true

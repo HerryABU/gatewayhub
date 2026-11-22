@@ -60,7 +60,12 @@ SPA 前端回退
 ### 2.3 端口与日志
 
 - 监听端口：`server.port`（默认 `8088`），与网关同一进程、同一端口。
-- 业务访问日志：`access_log.dir`（既有能力，按天/小时落盘）。
+- 业务访问日志：`access_log.dir`（默认 `log`），结构 `log/requests/<YYYY-MM-DD>/<HH>.log`，
+  每行一条 JSON。**隔离链路与普通反代写同一个文件、同一套字段**（只把 `kind` 记成 `isolation`、
+  `route_prefix` 记成服务前缀），未匹配 404 / 服务禁用 / 熔断降级同样落盘——
+  §7 的验收可以直接从日志核对，不必靠猜。
+- 日志分层归档：`log/archive/{daily,weekly,monthly,yearly}`，日 7z → 周 tar.gz → 月 tar.gz → 年 tar.xz，
+  与 NVS 的 `logarchive` 同一套层级；`gatewayhub.exe -archive` 可手动跑一轮。
 - 隔离网关审计：`isolation.audit_file`，JSON Lines，每次 reload / 模式切换一条。
 - 诊断日志：进程 stdout，统一前缀 `[isolation][分类][服务名]`。
 
