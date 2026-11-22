@@ -33,6 +33,11 @@ export default {
   // 站点设置
   getSettings: () => api.get('/settings'),
   updateSettings: (data) => api.put('/settings', data),
+  // 友情链接：纯跳转，不经反向代理；列表公开，增删改需管理员
+  listFriendLinks: () => api.get('/friend-links'),
+  createFriendLink: (data) => api.post('/friend-links', data),
+  updateFriendLink: (id, data) => api.put(`/friend-links/${encodeURIComponent(id)}`, data),
+  deleteFriendLink: (id) => api.delete(`/friend-links/${encodeURIComponent(id)}`),
   // 路由
   listRoutes: () => api.get('/routes'),
   createRoute: (data) => api.post('/routes', data),

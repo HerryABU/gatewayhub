@@ -70,6 +70,7 @@
 
       <main class="console-body">
         <RouteManage v-show="activeTab === 'routes'" />
+        <FriendLinks v-show="activeTab === 'links'" />
         <Isolation v-show="activeTab === 'isolation'" />
         <Health v-show="activeTab === 'health'" />
         <StatsPanel v-show="activeTab === 'stats'" />
@@ -117,6 +118,7 @@ import { authState, clearAuth } from '../store'
 import { SUPPORTED_LOCALES, setLocale } from '../i18n'
 import { theme, toggleTheme } from '../theme'
 import RouteManage from './RouteManage.vue'
+import FriendLinks from './FriendLinks.vue'
 import Isolation from './Isolation.vue'
 import StatsPanel from './StatsPanel.vue'
 import VisitorGeo from './VisitorGeo.vue'
@@ -139,6 +141,7 @@ const locales = SUPPORTED_LOCALES
 
 const navItems = computed(() => [
   { key: 'routes', icon: '📋', label: t('nav.routes'), sub: t('route.hotReload') },
+  { key: 'links', icon: '🔗', label: t('nav.friendLinks'), sub: t('linkmgr.hint') },
   { key: 'isolation', icon: '🧩', label: t('nav.isolation'), sub: t('isolation.serviceList') },
   { key: 'health', icon: '🩺', label: t('nav.health'), sub: t('health.autoCheck') },
   { key: 'stats', icon: '📊', label: t('nav.stats'), sub: t('stats.trend') },

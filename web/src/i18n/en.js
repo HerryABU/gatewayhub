@@ -53,7 +53,14 @@ export default {
     visit: 'Visit',
     enterConsole: 'Open Console',
     heroDefault: 'Unified access gateway: aggregate scattered web services into one entry with health checks, traffic analytics and security protection.',
-    viewServices: 'View services'
+    viewServices: 'View services',
+    viewLinks: 'Friend links',
+    friendLinks: 'Friend Links',
+    friendLinksHint: 'External sites below open in a new tab and are never routed through this gateway.',
+    noFriendLinks: 'No friend links yet',
+    externalOpen: 'Open in a new tab',
+    adminEntry: 'Administrator entry',
+    allServices: 'All services'
   },
   login: {
     title: 'Administrator Login',
@@ -73,7 +80,21 @@ export default {
     backup: 'Backup',
     health: 'Health Check',
     isolation: 'Isolation',
+    friendLinks: 'Friend Links',
     site: 'Site'
+  },
+  linkmgr: {
+    hint: 'Friend links are plain external redirects, not proxy routes. Saved links appear on the public homepage immediately.',
+    add: 'Add Friend Link',
+    edit: 'Edit Friend Link',
+    name: 'Name',
+    url: 'URL',
+    desc: 'Description',
+    nameHint: 'e.g. GatewayHub',
+    urlHint: 'https://example.com',
+    descHint: 'One-line description, optional',
+    empty: 'No friend links yet - add one from the top right',
+    deleteConfirm: 'Delete this friend link?'
   },
   route: {
     list: 'Route List',

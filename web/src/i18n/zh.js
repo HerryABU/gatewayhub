@@ -53,7 +53,14 @@ export default {
     visit: '访问',
     enterConsole: '进入控制台',
     heroDefault: '统一接入网关：将分散的 Web 服务聚合到一个入口，健康巡检、访问统计、安全防护一站式管理。',
-    viewServices: '查看开放服务'
+    viewServices: '查看开放服务',
+    viewLinks: '浏览友链',
+    friendLinks: '友情链接',
+    friendLinksHint: '以下站点为外部跳转，不经过本网关转发，将在新标签页打开。',
+    noFriendLinks: '暂无友链',
+    externalOpen: '在新标签页打开',
+    adminEntry: '管理员入口',
+    allServices: '全部服务'
   },
   login: {
     title: '管理员登录',
@@ -73,7 +80,21 @@ export default {
     backup: '数据库备份',
     health: '健康检查',
     isolation: '路径隔离',
+    friendLinks: '友链管理',
     site: '站点设置'
+  },
+  linkmgr: {
+    hint: '友链只是外部跳转链接，不创建反向代理路由；保存后访客首页立即可见。',
+    add: '新增友链',
+    edit: '编辑友链',
+    name: '名称',
+    url: '链接地址',
+    desc: '简介',
+    nameHint: '例如 GatewayHub',
+    urlHint: 'https://example.com',
+    descHint: '一句话说明，可留空',
+    empty: '暂无友链，点击右上角新增',
+    deleteConfirm: '确认删除这条友链？'
   },
   route: {
     list: '路由列表',
