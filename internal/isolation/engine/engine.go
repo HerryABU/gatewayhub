@@ -17,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"gatewayhub/internal/accesslog"
 	"gatewayhub/internal/isolation/breaker"
 	"gatewayhub/internal/isolation/config"
 	"gatewayhub/internal/isolation/diag"
@@ -31,6 +32,9 @@ type Options struct {
 	Audit   *diag.Audit
 	Loop    *metrics.LoopDetector
 	Table   *config.Table
+	// Logger 访问日志落盘器（与普通反代共用同一个写入器，落同一套目录结构）。
+	// 为 nil 时隔离链路不写访问日志。
+	Logger *accesslog.FileLogger
 	// TrustProxies 表示前面是否还有可信反代（决定客户端 IP 是否取 XFF/X-Real-IP）。
 	TrustProxies bool
 }
@@ -46,6 +50,7 @@ type Engine struct {
 	audit   *diag.Audit
 	loop    *metrics.LoopDetector
 	pool    *transportPool
+	logger  *accesslog.FileLogger
 
 	loopInjected bool
 	// trustProxies 决定客户端 IP 是否取 XFF/X-Real-IP（前面有可信反代时才可开）
@@ -65,6 +70,7 @@ func New(opts Options) *Engine {
 		metrics:      opts.Metrics,
 		audit:        opts.Audit,
 		pool:         newTransportPool(),
+		logger:       opts.Logger,
 		trustProxies: opts.TrustProxies,
 		guard:        newSelfLoopGuard(selfLoopWindow),
 	}
@@ -209,8 +215,64 @@ func (e *Engine) Table() *config.Table {
 	return e.table
 }
 
-// ServeHTTP 执行单个请求的完整处理循环。
+// SetFileLogger 注入访问日志落盘器（运行期可切换；nil 表示不落盘）。
+func (e *Engine) SetFileLogger(l *accesslog.FileLogger) {
+	e.mu.Lock()
+	e.logger = l
+	e.mu.Unlock()
+}
+
+// ServeHTTP 执行单个请求的完整处理循环，并落一条访问记录。
+//
+// 访问日志与普通反代共用同一个写入器（log/requests/<date>/<HH>.log），
+// 字段也一致，只把 route_prefix 记成**服务前缀**、kind 记成 isolation。
+// 隔离链路此前完全不写访问日志，导致 /openlist/ 这类请求在日志里 0 条，
+// 排查「页面打不开」时被误导了两次——所以这里连「未匹配 404 / 服务禁用 /
+// 熔断降级」这些早退分支也要记，不能只记成功转发的。
 func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	rec := newRecorder(w)
+	start := time.Now()
+
+	// 请求体片段必须在转发前嗅探（SniffBody 会把读流完整还原）
+	var body string
+	if e.loggerOf().BodyEnabled() {
+		body = accesslog.SniffBody(r)
+	}
+
+	prefix := e.serve(rec, r)
+	elapsed := time.Since(start)
+
+	if lg := e.loggerOf(); lg != nil {
+		err := lg.Log(accesslog.Entry{
+			Method:  r.Method,
+			Path:    r.URL.Path,
+			Query:   r.URL.RawQuery,
+			IP:      forward.ClientIP(r.RemoteAddr, r.Header, e.trustProxies),
+			UA:      r.UserAgent(),
+			Status:  rec.Status(),
+			Size:    rec.Bytes(),
+			Latency: elapsed.String(),
+			Headers: accesslog.HeadersOf(r.Header),
+			Body:    body,
+			// 与 DB 路由的前缀写法对齐（去掉前导 /，如 openlist 而非 /openlist）
+			RoutePrefix: strings.TrimPrefix(prefix, "/"),
+			Kind:        "isolation",
+		})
+		if err != nil {
+			diag.Logf(diag.ConfigError, prefix, "访问日志写入失败: %v", err)
+		}
+	}
+}
+
+// loggerOf 读当前日志器（热切换安全）。
+func (e *Engine) loggerOf() *accesslog.FileLogger {
+	e.mu.RLock()
+	defer e.mu.RUnlock()
+	return e.logger
+}
+
+// serve 执行一次请求处理，返回命中的服务前缀（未命中返回空串）。
+func (e *Engine) serve(w *recorder, r *http.Request) string {
 	e.mu.RLock()
 	m := e.matcher
 	e.mu.RUnlock()
@@ -226,12 +288,12 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		// FR-3：未匹配不猜测归属，直接 404
 		writeJSON(w, http.StatusNotFound, "route not found")
-		return
+		return ""
 	}
 	rt, ok := e.runtime(svc.Name)
 	if !ok {
 		writeJSON(w, http.StatusNotFound, "route not found")
-		return
+		return svc.Prefix
 	}
 	cfg := rt.service()
 	cnt := rt.counters
@@ -242,7 +304,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	if !cfg.Enabled {
 		diag.Logf(diag.ProxyDegrade, cfg.Name, "服务已禁用，请求被拒绝: %s %s", r.Method, r.URL.Path)
 		writeJSON(w, http.StatusServiceUnavailable, "service disabled")
-		return
+		return cfg.Prefix
 	}
 
 	// 熔断打开：直接降级，不再排队占用后端连接（NFR-4）
@@ -250,7 +312,7 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		cnt.BreakerTrips.Add(1)
 		diag.Logf(diag.ProxyDegrade, cfg.Name, "熔断中，请求直接降级: %s %s", r.Method, r.URL.Path)
 		writeJSON(w, http.StatusServiceUnavailable, "service temporarily unavailable (circuit open)")
-		return
+		return cfg.Prefix
 	}
 
 	st := &requestState{
@@ -271,22 +333,22 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		req = req.WithContext(ctx)
 	}
 
-	rec := newRecorder(w)
 	start := time.Now()
-	rt.proxy.ServeHTTP(rec, req)
+	rt.proxy.ServeHTTP(w, req)
 	elapsed := time.Since(start)
 
 	cnt.TotalLatencyMs.Add(elapsed.Milliseconds())
-	cnt.AddStatus(rec.Status())
+	cnt.AddStatus(w.Status())
 
 	// 重定向循环告警（同一来源短时间反复 3xx）
-	if rec.Status() >= 300 && rec.Status() < 400 && st.clientIP != "" {
+	if w.Status() >= 300 && w.Status() < 400 && st.clientIP != "" {
 		if e.loop.Hit(cfg.Name + "|" + st.clientIP) {
 			cnt.LoopAlerts.Add(1)
 			diag.Logf(diag.LoopWarning, cfg.Name, "疑似重定向循环：%s 在时间窗内重定向次数超阈值（%s）",
 				st.clientIP, r.URL.Path)
 		}
 	}
+	return cfg.Prefix
 }
 
 // ServiceStatus 是「配置 + 运行状态」的合并视图（FR-19）。
