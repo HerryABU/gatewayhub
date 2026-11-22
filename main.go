@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -23,6 +24,7 @@ import (
 	isoconfig "gatewayhub/internal/isolation/config"
 	"gatewayhub/internal/isolation/diag"
 	isoengine "gatewayhub/internal/isolation/engine"
+	"gatewayhub/internal/logarchive"
 	"gatewayhub/internal/proxy"
 	"gatewayhub/internal/router"
 	"gatewayhub/internal/security"
@@ -37,11 +39,29 @@ var ip2regionXDB []byte
 
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
+	archiveOnly := flag.Bool("archive", false, "只执行一次日志分层归档后退出（运维手动归档用）")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
 		log.Fatalf("加载配置失败: %v", err)
+	}
+
+	// -archive：不启服务，只跑一轮分层归档（适合放进系统计划任务）
+	if *archiveOnly {
+		opt := logarchive.Options{
+			LogDir:     cfg.AccessLog.Dir,
+			ArchiveDir: cfg.AccessLog.Archive.Dir,
+		}.Resolve()
+		outs, err := logarchive.Run(opt)
+		for _, o := range outs {
+			log.Printf("[logarchive] 产出 %s", o)
+		}
+		if err != nil {
+			log.Fatalf("[logarchive] 归档失败: %v", err)
+		}
+		log.Printf("[logarchive] 完成：%s → %s，新建 %d 个包", opt.LogDir, opt.ArchiveDir, len(outs))
+		return
 	}
 
 	db, err := database.Init(&cfg.Database)
@@ -73,17 +93,26 @@ func main() {
 
 	// 反向代理管理器（内存路由表）
 	proxyMgr := proxy.NewManager(db, writer, cfg.Server.BaseDomain)
-	// 访问日志落盘（含请求头，按 天/小时 组织），失败不阻塞转发
+	// 访问日志落盘（含请求头，类别/天/小时 组织，与 NVS 同结构），失败不阻塞转发
 	var fileLogger *accesslog.FileLogger
 	if cfg.AccessLog.Enabled && cfg.AccessLog.Dir != "" {
-		fileLogger = accesslog.New(cfg.AccessLog.Dir)
+		fileLogger = accesslog.New(cfg.AccessLog.Dir,
+			accesslog.WithBody(cfg.AccessLog.Body),
+			accesslog.WithRedact(cfg.AccessLog.RedactSensitive),
+		)
 		proxyMgr.SetFileLogger(fileLogger)
-		log.Printf("访问日志已启用：%s/YYYY-MM-DD/HH.log", cfg.AccessLog.Dir)
+		log.Printf("访问日志已启用：%s/requests/YYYY-MM-DD/HH.log（请求体=%v，脱敏=%v）",
+			cfg.AccessLog.Dir, cfg.AccessLog.Body, cfg.AccessLog.RedactSensitive)
 	}
 	if err := proxyMgr.Load(); err != nil {
 		log.Fatalf("加载路由失败: %v", err)
 	}
 	log.Printf("已加载 %d 条路由", proxyMgr.Count())
+
+	// 日志分层归档（对齐 NVS：日 7z → 周 tar.gz → 月 tar.gz → 年 tar.xz），启动即跑一次，之后按周期
+	if fileLogger != nil && cfg.AccessLog.Archive.Enabled {
+		startLogArchive(cfg)
+	}
 
 	// 路径隔离网关：显式配置表（isolation.yaml）+ 热加载 + 变更审计
 	var isoEngine *isoengine.Engine
@@ -102,6 +131,7 @@ func main() {
 		isoEngine = isoengine.New(isoengine.Options{
 			Table:        table,
 			Audit:        audit,
+			Logger:       fileLogger, // 隔离链路与普通反代共用同一个访问日志写入器
 			TrustProxies: cfg.Isolation.TrustProxies,
 		})
 		if cfg.Isolation.Watch {
@@ -193,4 +223,50 @@ func main() {
 		isoWatcher.Stop()
 	}
 	log.Println("已退出")
+}
+
+// startLogArchive 启动日志分层归档（与 NVS 的 logarchive 同一套层级）：
+// 启动即跑一次（把昨天的日志补成包），之后按 access_log.archive.interval 循环。
+// 归档失败只告警，绝不影响网关转发。
+func startLogArchive(cfg *config.Config) {
+	opt := logarchive.Options{
+		LogDir:     cfg.AccessLog.Dir,
+		ArchiveDir: cfg.AccessLog.Archive.Dir,
+	}.Resolve()
+	interval := 24 * time.Hour
+	if cfg.AccessLog.Archive.Interval != "" {
+		if d, err := time.ParseDuration(cfg.AccessLog.Archive.Interval); err == nil && d > 0 {
+			interval = d
+		} else {
+			log.Printf("[logarchive] interval=%q 无法解析，回退 24h", cfg.AccessLog.Archive.Interval)
+		}
+	}
+	log.Printf("[logarchive] 分层归档已启用：%s → %s（周期 %s；7z=%v）",
+		opt.LogDir, opt.ArchiveDir, interval, logarchive.SevenZipPath() != "")
+
+	run := func(tag string) {
+		outs, err := logarchive.Run(opt)
+		switch {
+		case err != nil:
+			log.Printf("[logarchive] %s归档有告警（已生成 %d 个包）：%v", tag, len(outs), err)
+		case len(outs) == 0:
+			log.Printf("[logarchive] %s归档：无新内容", tag)
+		default:
+			sample := outs
+			if len(sample) > 3 {
+				sample = sample[:3]
+			}
+			log.Printf("[logarchive] %s归档完成：新建 %d 个包（%s 等）",
+				tag, len(outs), strings.Join(sample, ", "))
+		}
+	}
+
+	go run("启动")
+	go func() {
+		tk := time.NewTicker(interval)
+		defer tk.Stop()
+		for range tk.C {
+			run("定时")
+		}
+	}()
 }

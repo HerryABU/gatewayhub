@@ -55,9 +55,22 @@ type LogConfig struct {
 	FilePath string `yaml:"file_path"`
 }
 
+// AccessLogConfig 访问日志落盘配置。
+//
+// 目录结构与记录格式与 NVS 一致：{dir}/requests/<YYYY-MM-DD>/<HH>.log（JSONL）。
 type AccessLogConfig struct {
-	Enabled bool   `yaml:"enabled"` // 是否落盘访问日志（含请求头）
-	Dir     string `yaml:"dir"`     // 日志根目录，按 天/小时 组织：{dir}/YYYY-MM-DD/HH.log
+	Enabled         bool          `yaml:"enabled"`          // 是否落盘访问日志（含请求头）
+	Dir             string        `yaml:"dir"`              // 日志根目录，按 类别/天/小时 组织
+	Body            bool          `yaml:"body"`             // 是否记录请求体片段（≤64KB；multipart 只记占位）
+	RedactSensitive bool          `yaml:"redact_sensitive"` // 落盘前脱敏 Cookie/Authorization/token（生产建议 true）
+	Archive         ArchiveConfig `yaml:"archive"`          // 分层归档（日7z / 周月tar.gz / 年tar.xz）
+}
+
+// ArchiveConfig 日志分层归档配置（对齐 NVS 的 logarchive）。
+type ArchiveConfig struct {
+	Enabled  bool   `yaml:"enabled"`  // 是否启用定时分层归档
+	Dir      string `yaml:"dir"`      // 归档输出目录，空则 {access_log.dir}/archive
+	Interval string `yaml:"interval"` // 归档周期（Go duration），默认 24h
 }
 
 type SecurityConfig struct {
@@ -144,8 +157,14 @@ func Default() *Config {
 		},
 		Log: LogConfig{Level: "info", Output: "stdout"},
 		AccessLog: AccessLogConfig{
-			Enabled: true,
-			Dir:     "logs",
+			Enabled:         true,
+			Dir:             "log",
+			Body:            true,
+			RedactSensitive: false,
+			Archive: ArchiveConfig{
+				Enabled:  true,
+				Interval: "24h",
+			},
 		},
 		Security: SecurityConfig{
 			Enabled:      true,

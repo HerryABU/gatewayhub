@@ -29,7 +29,13 @@ geo:
     online_fallback: ""
 access_log:
     enabled: true
-    dir: logs
+    dir: log
+    body: true
+    redact_sensitive: false
+    archive:
+        enabled: true
+        dir: ""
+        interval: 24h
 log:
     level: info
     output: stdout
