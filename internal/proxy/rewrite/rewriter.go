@@ -102,6 +102,10 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		}
 		decoded = rw.rewriteJS(decoded)
 	}
+	// 体已改写：换成本网关自算的 ETag（no-cache 再验证），否则客户端可能长期复用旧副本
+	if MarkRewritten(resp.Request, resp, decoded) {
+		return nil
+	}
 	writeBody(resp, decoded, gz)
 	return nil
 }

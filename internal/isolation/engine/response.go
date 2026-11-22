@@ -241,14 +241,19 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 		return
 	}
 	_ = origin.Close()
+	// 改写后输出明文：删掉编码头，避免浏览器按 gzip 解码明文（FR-12）
+	resp.Header.Del("Content-Encoding")
+	// 体已变：后端 ETag/Last-Modified 描述的是原文，必须换成本网关按改写后字节算的指纹。
+	// 只删不补会让浏览器凭启发式规则长期缓存旧副本，网关改写逻辑一升级就与客户端脱节
+	// （实测：旧版 JS 字面量改写留下的畸形 JS 被 Edge 永久缓存，接口全落空）。
+	resp.Header.Del("Content-MD5")
+	if rewrite.MarkRewritten(resp.Request, resp, out) {
+		cnt.HTMLHits.Add(int64(hits))
+		return
+	}
 	resp.Body = io.NopCloser(bytes.NewReader(out))
 	resp.ContentLength = int64(len(out))
 	resp.Header.Set("Content-Length", strconv.Itoa(len(out)))
-	// 改写后输出明文：删掉编码头，避免浏览器按 gzip 解码明文（FR-12）
-	resp.Header.Del("Content-Encoding")
-	// 体已变，强校验头失效，必须删除否则客户端缓存会永久 304
-	resp.Header.Del("ETag")
-	resp.Header.Del("Content-MD5")
 	cnt.HTMLHits.Add(int64(hits))
 	diag.Logf(diag.RewriteOK, cfg.Name, "字面量改写命中 %d 处，输出 %d 字节（原 %d）: %s",
 		hits, len(out), len(buf), requestPath(resp))
