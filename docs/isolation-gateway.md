@@ -264,6 +264,36 @@ services:
 
 对上述情况，代理只保证三件事：**请求落在 `/{服务名}/` 内、Cookie 不跨服务污染、重定向不跳出前缀**。
 
+### 5.3 铁律：Cookie 的 Path 必须收到服务前缀下
+
+路径式反代意味着**所有服务同源**。而浏览器判断 cookie 归属只看 `(name, domain, path)`
+三元组 —— 不看端口，更不看「这个 cookie 是哪个应用发的」。后端只要把 Path 写成 `/`
+（极常见：NVS 的 `token` / `refresh_token` 就写死 `"/"`），后果是：
+
+1. 该凭据会随**兄弟前缀**的每个请求一起发出去（`/openlist/*` 的每个请求都拖着 NVS 的 JWT）；
+2. 在对方页面的 DevTools → Application → Cookies 里**原样可见**（因为 `/` 匹配一切）；
+3. 对方后端即便不认，也已经在网络上拿到了这个会话标识。
+
+> 实测事故：用户打开 `localhost:8088/openlist/`，DevTools 的 Cookie 列表里躺着两条
+> NVS 的 JWT（`token`、`refresh_token`，Path=`/`）。这不是 openlist 的问题 ——
+> openlist 自己的 cookie 被隔离引擎加帽并收到 `/openlist`，干净；泄露的是**没走隔离引擎、
+> 走普通 DB 路由**的 NVS。
+
+因此普通代理链路（`internal/proxy/rewrite`）也必须做同一件事：
+**把 Set-Cookie 的 Path 收紧到 `/{prefix}`，并且补一条 `Path=/` 的过期副本**。
+
+补过期副本不是可选项：浏览器把 `Path=/` 和 `Path=/go-nvs` 视为**两个不同的 cookie**，
+只改新下发的、不删旧的，等于只给增量打补丁，用户浏览器里的存量泄露照旧。
+
+两条边界：
+
+- **只收紧 Path，不改名。** 普通代理没有请求侧的加帽逻辑，改名会让后端读不到刚下发的会话
+  （登录立刻失效）。要名字级隔离，请用隔离引擎的 `cookie_hat`，或给服务配子域名。
+- **`localStorage` / `IndexedDB` 收不进路径。** 它们按 origin 隔离，`/openlist/` 与 `/go-nvs/`
+  同源即共享，页面里的 JS 读得到对方的键。**这是路径式反代的物理上限，网关无法改写**
+  （硬改等于伪造应用的运行态，违反 5.1）。要彻底隔离只有子域名模式（§4.1-C）。
+  另注：HttpOnly 的 cookie 至少保证 JS 读不到，但网络层仍会发送 —— 所以 Path 必须收。
+
 ---
 
 ## 6. 兼容性标记
