@@ -60,6 +60,11 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		resp.Header.Set("Location", rw.rewriteLocation(loc))
 	}
 
+	// Set-Cookie 的 Path 必须收紧到本服务前缀：同源下 Path=/ 的凭据会被
+	// 发给兄弟前缀、并在对方页面的 DevTools 里可见（详见 cookie.go）。
+	// 放在 MIME 判断之前：登录接口返回的 JSON 恰恰是下发 cookie 的地方。
+	rw.tightenSetCookies(resp)
+
 	mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
 	isHTML := mt == "text/html" || mt == "application/xhtml+xml"
 	isCSS := mt == "text/css"
