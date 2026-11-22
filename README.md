@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.9**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.6.0**
 
 ---
 
@@ -278,6 +278,7 @@ server:
   host: "0.0.0.0"
   port: 8088
   base_domain: "localhost" # 子域名后缀（空则禁用子域名路由）
+  max_hops: 5             # 自指/嵌套链式转发的跳数上限，超过返回 508（<=0 用默认 5）
 
 database:
   driver: sqlite
