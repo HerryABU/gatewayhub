@@ -104,3 +104,53 @@ func TestEtagMatches(t *testing.T) {
 		}
 	}
 }
+
+// 嵌套链：每一跳的 ETag 必须带自己的前缀，否则外层 If-None-Match 会在内层误命中 304。
+func TestMarkRewrittenScopeIsHopLocal(t *testing.T) {
+	body := []byte("same body after rewrite")
+	a := newResp("")
+	MarkRewrittenScope(nil, a, body, "a/b/c")
+	b := newResp("")
+	MarkRewrittenScope(nil, b, body, "c")
+	if a.Header.Get("ETag") == b.Header.Get("ETag") {
+		t.Fatalf("不同跳的 ETag 不能相同: %s", a.Header.Get("ETag"))
+	}
+
+	// 浏览器带着外层的 tag 回来，内层不得回 304（内层内容可能是未完全改写的版本）
+	req, _ := http.NewRequest("GET", "http://gw/c/", nil)
+	req.Header.Set("If-None-Match", a.Header.Get("ETag"))
+	c := newResp("")
+	if MarkRewrittenScope(req, c, body, "c") {
+		t.Fatal("内层不得用外层的 ETag 命中 304")
+	}
+
+	// 同一跳、同一内容仍然可以正常 304
+	req2, _ := http.NewRequest("GET", "http://gw/a/b/c/", nil)
+	req2.Header.Set("If-None-Match", a.Header.Get("ETag"))
+	d := newResp("")
+	if !MarkRewrittenScope(req2, d, body, "a/b/c") {
+		t.Fatal("同跳同内容应命中 304")
+	}
+}
+
+func TestEtagScopeLongPrefixDoesNotCollide(t *testing.T) {
+	a := strings.Repeat("a", 40) + "x"
+	b := strings.Repeat("a", 40) + "y"
+	if etagScope(a) == etagScope(b) {
+		t.Fatal("长前缀截断后撞名，必须带原文 hash 兜底")
+	}
+	if s := etagScope("apps/openlist"); strings.ContainsAny(s, "/") || len(s) > 40 {
+		t.Fatalf("scope 必须是安全 token: %q", s)
+	}
+}
+
+// 兼容旧调用：无 scope 时仍是原来的 gw-<hash> 形态
+func TestMarkRewrittenBackwardCompatible(t *testing.T) {
+	old := newResp("")
+	MarkRewritten(nil, old, []byte("x"))
+	scoped := newResp("")
+	MarkRewrittenScope(nil, scoped, []byte("x"), "")
+	if old.Header.Get("ETag") != scoped.Header.Get("ETag") {
+		t.Fatal("空 scope 应与旧函数行为一致")
+	}
+}

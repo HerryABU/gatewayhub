@@ -65,6 +65,11 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 		Director: func(req *http.Request) {
 			// 记录网关侧原始路径（外链 CSS 相对化需要推算基准目录）
 			req = rewrite.WithGWPath(req, req.URL.Path)
+			// 嵌套链：把对外前缀逐跳累加，最内层据此算出完整链
+			// （/a → /b → /c 三层时，后端资源必须落在 /a/b/c/ 下）。
+			inbound := rewrite.SanitizeChain(req.Header.Get(rewrite.PrefixChainHeader))
+			rewrite.WithInboundChain(req, inbound)
+			req.Header.Set(rewrite.PrefixChainHeader, rewrite.JoinChain(inbound, r.Prefix))
 			rest := sanitizeRest(req.URL.Path, r.Prefix)
 			applyForwardHeaders(req, p)
 			req.URL.Path = target.JoinPath(p.Root, rest)

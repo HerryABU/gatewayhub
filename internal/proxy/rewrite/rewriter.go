@@ -55,6 +55,20 @@ func (rw *Rewriter) gatewayPath() string {
 // 用于 Location 响应头、JS 资源引用（import / new URL / img.src 等，按模块/脚本 URL 解析）。
 
 func (rw *Rewriter) Modify(resp *http.Response) error {
+	// 嵌套链的完整对外前缀：优先用最内层写在响应头里的链；
+	// 最内层自己则用「本跳收到的人站链 + 本跳前缀」拼出来。
+	// 只有最外层（入站无链）才把内部头摘掉，不能让它漏给浏览器。
+	inbound := SanitizeChain(InboundChain(resp.Request))
+	full := SanitizeChain(resp.Header.Get(PrefixChainHeader))
+	if full == "" {
+		full = JoinChain(inbound, rw.prefix)
+	}
+	outermost := inbound == ""
+	if outermost {
+		defer resp.Header.Del(PrefixChainHeader) // 任何分支都不能把内部头漏给浏览器
+	}
+	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host}
+
 	// 重定向 Location（无需读 body）
 	if loc := resp.Header.Get("Location"); loc != "" {
 		resp.Header.Set("Location", rw.rewriteLocation(loc))
@@ -74,10 +88,20 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		return nil // 二进制 / JSON / 其他：直接透传
 	}
 
+	// 解不开的编码（br / zstd / 多段编码）必须一个字节都不碰：
+	// 后面 writeBody 会按 enc 重打包，若 enc 判断错就会把压缩字节当明文发给浏览器。
+	if _, ok := encodingOf(resp.Header.Get("Content-Encoding")); !ok {
+		return nil
+	}
+
 	// 读全量判断：静态 import / 动态 import / fetch 路径声明可能位于文件任意位置，
 	// 不能用有限窗口预检，否则 SPA 的路由懒加载 chunk（import 在文件中部）会被漏判导致 404。
-	decoded, raw, gz, err := readBody(resp)
+	decoded, raw, enc, err := readBody(resp)
 	if err != nil {
+		// 读流失败时把已读到的字节还回去，不能让客户端收到被掏空的响应。
+		if len(raw) > 0 {
+			resp.Body = io.NopCloser(bytes.NewReader(raw))
+		}
 		return nil // 解压失败则原样透传
 	}
 
@@ -107,11 +131,18 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		}
 		decoded = rw.rewriteJS(decoded)
 	}
-	// 体已改写：换成本网关自算的 ETag（no-cache 再验证），否则客户端可能长期复用旧副本
-	if MarkRewritten(resp.Request, resp, decoded) {
+	// 完整前缀链写回响应头，供外层继续改写（最外层由上面的 defer 摘掉）。
+	if !outermost {
+		resp.Header.Set(PrefixChainHeader, full)
+	}
+
+	// 体已改写：换成本网关自算的 ETag（no-cache 再验证），否则客户端可能长期复用旧副本。
+	// 指纹必须带本跳前缀：嵌套链里每一跳都会改写同一份内容，ETag 若只取内容 hash，
+	// 浏览器拿外层 ETag 去内层校验就会误命中 304，拿到外层已过时的一份字节。
+	if MarkRewrittenScope(resp.Request, resp, decoded, rw.prefix) {
 		return nil
 	}
-	writeBody(resp, decoded, gz)
+	writeBody(resp, decoded, enc)
 	return nil
 }
 
