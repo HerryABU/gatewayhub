@@ -38,6 +38,7 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 		// 公开接口（读）
 		api.GET("/settings", h.GetSettings)
 		api.GET("/compliance", h.GetCompliance)
+		api.GET("/friend-links", h.ListFriendLinks) // 友链：纯跳转，不经过反向代理
 
 		// 需完成建站向导后方可访问
 		gated := api.Group("")
@@ -52,6 +53,11 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 			{
 				admin.PUT("/auth/password", h.ChangePassword)
 				admin.PUT("/settings", h.UpdateSettings)
+
+				// 友链管理（仅改展示链接，不创建反向代理路由）
+				admin.POST("/friend-links", h.CreateFriendLink)
+				admin.PUT("/friend-links/:id", h.UpdateFriendLink)
+				admin.DELETE("/friend-links/:id", h.DeleteFriendLink)
 
 				// 路由管理
 				admin.POST("/routes", h.CreateRoute)
