@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.6**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.5.7**
 
 ---
 
@@ -187,7 +187,7 @@ cd web && npm install && npm run dev     # 监听 :5173，代理 /api 到 :8088
 
 工作流会依次：校验版本一致性 → 创建并推送 `v{版本}` tag → 构建前端 → 并行交叉编译 10 个平台 → 发布 Release 并附 `SHA256SUMS`。
 
-也可以直接推 tag：`git tag v1.5.7 && git push origin v1.5.7`。
+也可以直接推 tag：`git tag v1.5.7 && git push origin v1.5.7`（把版本号换成当前版本）。
 
 PR 与 `main` 推送会跑 **CI**：`npm ci` + `vite build` + `go vet` + `go test` + 单平台编译（验证 `go:embed` 所需的前端产物齐全）。
 
