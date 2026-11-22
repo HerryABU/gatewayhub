@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -21,6 +22,7 @@ type Manager struct {
 	mu         sync.RWMutex
 	m          map[string]*Entry
 	multi      []string // 含 "/" 的多级前缀，按长度降序（最长前缀匹配用）
+	warnSig    string   // 上一次「路由被跳过」告警的指纹，用于去重（同一批错误不重复刷屏）
 }
 
 // NewManager 创建代理管理器
@@ -33,7 +35,12 @@ func (m *Manager) SetFileLogger(l *accesslog.FileLogger) {
 	m.fileLog = l
 }
 
-// Load 从数据库加载全部路由到内存
+// Load 从数据库加载全部路由到内存。
+//
+// 单条路由解析失败（target 写错、环境变量缺失等）不会中断整体加载，但**必须留痕**：
+// 历史实现是 `if err == nil { ... }` 静默跳过，结果表现为「后台配了路由、内存表里没有、
+// 请求永远回落控制台 SPA」，日志里只少了一条、没有任何错误提示（实测 target 写成
+// `127.0.0.1:9100` 时就是这样，正解是 `:9100` 或 `http://127.0.0.1:9100`）。
 func (m *Manager) Load() error {
 	var routes []models.Route
 	if err := m.db.Find(&routes).Error; err != nil {
@@ -42,12 +49,31 @@ func (m *Manager) Load() error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.m = make(map[string]*Entry, len(routes))
+	var skipped []string
 	for _, r := range routes {
-		if e, err := m.buildEntry(r); err == nil {
-			m.m[r.Prefix] = e
+		e, err := m.buildEntry(r)
+		if err != nil {
+			log.Printf("[proxy] 路由 %s 已跳过（target=%q）：%v", r.Prefix, r.Target, err)
+			skipped = append(skipped, r.Prefix)
+			continue
 		}
+		m.m[r.Prefix] = e
 	}
 	m.rebuildMultiLocked()
+	if len(skipped) > 0 {
+		// 去重：启动期 Load 可能被调用两次（加载 + 演示数据补齐后重载），
+		// 同一批错误只提示一次，免得用户以为出了两个问题。
+		sig := strings.Join(skipped, ",")
+		if sig != m.warnSig {
+			m.warnSig = sig
+			log.Printf("[proxy] 警告：%d/%d 条路由因 target 无法解析而未生效（%s）——"+
+				"target 只接受 `:端口` 或完整 URL（如 http://host:port/base），"+
+				"写 `host:port` 会被拒绝；请在控制台「路由」里修正后保存",
+				len(skipped), len(routes), sig)
+		}
+	} else {
+		m.warnSig = ""
+	}
 	return nil
 }
 

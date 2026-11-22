@@ -70,7 +70,10 @@ func Parse(t string) (Parsed, error) {
 		return p, nil
 	}
 	if !strings.HasPrefix(t, ":") {
-		return p, fmt.Errorf("target must start with ':' or be a full url: %s", t)
+		// 常见误写：host:port（如 127.0.0.1:9100）。这里给出可直接照抄的两种正解，
+		// 否则用户只能面对一句 "must start with ':'" 猜格式。
+		return p, fmt.Errorf("target %q 不合法：只接受 `:端口`（如 :9100）、`:端口/根路径`，"+
+			"或完整 URL（如 http://127.0.0.1:9100）；不要写成 host:port", t)
 	}
 	rest := t[1:] // 形如 8080 或 8080/api/v1
 	idx := strings.Index(rest, "/")

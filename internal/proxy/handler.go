@@ -39,10 +39,11 @@ func (m *Manager) Handle(c *gin.Context) {
 	if prefix, ok := m.matchSubdomain(c.Request.Host); ok {
 		if entry, ok := m.Get(prefix); ok {
 			if entry.Route.Status != models.StatusActive {
+				m.logRejected(c, prefix, kindSubdomain, http.StatusServiceUnavailable)
 				c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": "route disabled"})
 				return
 			}
-			m.serve(c, entry, entry.SubProxy, prefix, path, clientIP)
+			m.serve(c, entry, entry.SubProxy, prefix, path, clientIP, kindSubdomain)
 			return
 		}
 	}
@@ -54,17 +55,31 @@ func (m *Manager) Handle(c *gin.Context) {
 		return
 	}
 	if entry.Route.Status != models.StatusActive {
+		m.logRejected(c, prefix, kindPath, http.StatusServiceUnavailable)
 		c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": "route disabled"})
 		return
 	}
-	m.serve(c, entry, entry.Proxy, prefix, path, clientIP)
+	m.serve(c, entry, entry.Proxy, prefix, path, clientIP, kindPath)
 }
 
+// 访问日志里的 kind 取值（网关扩展字段，NVS 侧没有这个字段）
+const (
+	kindPath      = "path"      // 路径式反代（剥离前缀 + 响应重写）
+	kindSubdomain = "subdomain" // 子域名反代（零重写）
+	kindIsolation = "isolation" // 路径隔离网关
+)
+
 // serve 执行转发并异步记录统计与访问日志（含请求头）
-func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, prefix, path, clientIP string) {
+func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, prefix, path, clientIP, kind string) {
 	start := time.Now()
 	sw := &statusWriter{ResponseWriter: c.Writer, status: http.StatusOK}
 	req := c.Request
+
+	// 请求体片段：必须在转发前嗅探（转发会消费 Body），SniffBody 会完整还原读流
+	var body string
+	if m.fileLog.BodyEnabled() {
+		body = accesslog.SniffBody(req)
+	}
 
 	if isUpgrade(req) {
 		// WebSocket：跳过请求超时，避免长连接被掐断
@@ -86,24 +101,43 @@ func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, 
 		ResponseTime: int(elapsed),
 	})
 
-	// 访问日志落盘（含完整请求头，按天/小时分文件）
-	if m.fileLog != nil {
-		headers := make(map[string]string, len(req.Header))
-		for k, vs := range req.Header {
-			headers[k] = strings.Join(vs, ", ")
-		}
-		if err := m.fileLog.Log(accesslog.Entry{
-			Method:      req.Method,
-			Path:        path,
-			Status:      sw.status,
-			LatencyMs:   elapsed,
-			ClientIP:    clientIP,
-			UserAgent:   req.UserAgent(),
-			RoutePrefix: prefix,
-			Headers:     headers,
-		}); err != nil {
-			log.Printf("[accesslog] write failed: %v", err)
-		}
+	m.logAccess(req, prefix, kind, sw.status, sw.bytes, elapsed, clientIP, body)
+}
+
+// logRejected 记录「命中路由但被拒」的请求（路由已禁用等），保证访问日志不缺口。
+func (m *Manager) logRejected(c *gin.Context, prefix, kind string, status int) {
+	if m.fileLog == nil {
+		return
+	}
+	req := c.Request
+	var body string
+	if m.fileLog.BodyEnabled() {
+		body = accesslog.SniffBody(req)
+	}
+	m.logAccess(req, prefix, kind, status, 0, 0, clientIPFrom(req.RemoteAddr, req.Header), body)
+}
+
+// logAccess 落盘一条访问记录（字段名与 NVS 对齐，另加 route_prefix / kind）。
+func (m *Manager) logAccess(req *http.Request, prefix, kind string, status int, size int64, latencyMs int64, clientIP, body string) {
+	if m.fileLog == nil {
+		return
+	}
+	err := m.fileLog.Log(accesslog.Entry{
+		Method:      req.Method,
+		Path:        req.URL.Path,
+		Query:       req.URL.RawQuery,
+		IP:          clientIP,
+		UA:          req.UserAgent(),
+		Status:      status,
+		Size:        size,
+		Latency:     (time.Duration(latencyMs) * time.Millisecond).String(),
+		Headers:     accesslog.HeadersOf(req.Header),
+		Body:        body,
+		RoutePrefix: prefix,
+		Kind:        kind,
+	})
+	if err != nil {
+		log.Printf("[accesslog] write failed: %v", err)
 	}
 }
 
@@ -112,10 +146,11 @@ func isUpgrade(req *http.Request) bool {
 	return strings.EqualFold(req.Header.Get("Connection"), "Upgrade") && req.Header.Get("Upgrade") != ""
 }
 
-// statusWriter 捕获响应状态码
+// statusWriter 捕获响应状态码与写出字节数
 type statusWriter struct {
 	gin.ResponseWriter
 	status int
+	bytes  int64
 }
 
 func (w *statusWriter) WriteHeader(code int) {
@@ -124,5 +159,7 @@ func (w *statusWriter) WriteHeader(code int) {
 }
 
 func (w *statusWriter) Write(b []byte) (int, error) {
-	return w.ResponseWriter.Write(b)
+	n, err := w.ResponseWriter.Write(b)
+	w.bytes += int64(n)
+	return n, err
 }
