@@ -4,6 +4,9 @@ server:
     read_timeout: 30
     write_timeout: 30
     base_domain: localhost
+    # 自指/嵌套链式转发的跳数上限：target 指向网关自身时，来回超过这个跳数就返回 508，
+    # 避免配错的自指变成无限请求生成器。<=0 用默认值 5。
+    max_hops: 5
 database:
     driver: sqlite
     dsn: data/gateway.db

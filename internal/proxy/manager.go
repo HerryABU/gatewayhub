@@ -9,9 +9,19 @@ import (
 	"gorm.io/gorm"
 
 	"gatewayhub/internal/accesslog"
+	"gatewayhub/internal/hopguard"
 	"gatewayhub/internal/models"
 	"gatewayhub/internal/stats"
 )
+
+// SelfInfo 描述网关自身，用于识别「自指」路由并限制链式转发跳数。
+//
+// 自指是合法配置（把控制台/另一个前缀的站点挂到新前缀下、迁移期做旧地址别名），
+// 所以这里只做识别与告警，真正的防死循环靠 hopguard 的跳数上限。
+type SelfInfo struct {
+	Port    int // 网关监听端口；0 表示不做自指识别
+	MaxHops int // 链式转发最大跳数；0 用 hopguard 默认值
+}
 
 // Manager 反向代理管理器（内存路由表 + 热加载 + 子域名/路径双模式）
 type Manager struct {
@@ -19,15 +29,25 @@ type Manager struct {
 	stats      *stats.Writer
 	fileLog    *accesslog.FileLogger // 访问日志落盘（含请求头），可为 nil
 	baseDomain string                // 子域名后缀（如 localhost），空则禁用子域名路由
+	self       SelfInfo              // 自身地址信息（自指识别 + 跳数上限）
+	hops       *hopguard.Guard
 	mu         sync.RWMutex
 	m          map[string]*Entry
 	multi      []string // 含 "/" 的多级前缀，按长度降序（最长前缀匹配用）
 	warnSig    string   // 上一次「路由被跳过」告警的指纹，用于去重（同一批错误不重复刷屏）
+	selfSig    string   // 上一次「自指路由」告警的指纹（同样的批次不重复刷屏）
 }
 
 // NewManager 创建代理管理器
-func NewManager(db *gorm.DB, stats *stats.Writer, baseDomain string) *Manager {
-	return &Manager{db: db, stats: stats, baseDomain: baseDomain, m: make(map[string]*Entry)}
+func NewManager(db *gorm.DB, stats *stats.Writer, baseDomain string, self SelfInfo) *Manager {
+	return &Manager{
+		db:         db,
+		stats:      stats,
+		baseDomain: baseDomain,
+		self:       self,
+		hops:       hopguard.New(self.MaxHops),
+		m:          make(map[string]*Entry),
+	}
 }
 
 // SetFileLogger 注入访问日志落盘器（含请求头，按天/小时）
@@ -50,6 +70,7 @@ func (m *Manager) Load() error {
 	defer m.mu.Unlock()
 	m.m = make(map[string]*Entry, len(routes))
 	var skipped []string
+	selfs := make([]string, 0, len(routes))
 	for _, r := range routes {
 		e, err := m.buildEntry(r)
 		if err != nil {
@@ -58,8 +79,12 @@ func (m *Manager) Load() error {
 			continue
 		}
 		m.m[r.Prefix] = e
+		if e.Self {
+			selfs = append(selfs, r.Prefix)
+		}
 	}
 	m.rebuildMultiLocked()
+	m.warnSelfLocked(selfs, len(routes))
 	if len(skipped) > 0 {
 		// 去重：启动期 Load 可能被调用两次（加载 + 演示数据补齐后重载），
 		// 同一批错误只提示一次，免得用户以为出了两个问题。
@@ -77,6 +102,56 @@ func (m *Manager) Load() error {
 	return nil
 }
 
+// warnSelfLocked 对「自指路由」打一次汇总告警（调用方需持有写锁）。
+//
+// 自指不是错误：把控制台、另一个前缀的站点挂到新前缀下时，target 本来就该指向自己。
+// 但完全不说会有两种灾难：一是配错了（target 根路径恰好等于自身前缀，永远绕回来），
+// 二是链路来回转几十圈才被跳数上限拦住，日志里只有一串 508 看不出是哪个前缀。
+func (m *Manager) warnSelfLocked(selfs []string, total int) {
+	sort.Strings(selfs)
+	sig := strings.Join(selfs, ",")
+	if sig == m.selfSig {
+		return // 同一批自指路由只提示一次（启动期 Load 会被调用两次）
+	}
+	m.selfSig = sig
+	if len(selfs) == 0 {
+		return
+	}
+	var dead []string
+	for _, p := range selfs {
+		if e, ok := m.m[p]; ok && selfLoopsBack(e) {
+			dead = append(dead, p)
+		}
+	}
+	log.Printf("[proxy] 检测到 %d/%d 条自指路由（target 指向网关自身 :%d）：%s；"+
+		"链式跳数上限 %d，超过即返回 508", len(selfs), total, m.self.Port, sig, m.hops.Max())
+	if len(dead) > 0 {
+		log.Printf("[proxy] 警告：自指路由 %s 的 target 根路径等于自身前缀，转发会绕回同一前缀（必然死循环）；"+
+			"请把 target 指向另一个前缀（如 http://127.0.0.1:%d/other）",
+			strings.Join(dead, ", "), m.self.Port)
+	}
+}
+
+// selfLoopsBack 判断自指路由是否「绕回自己」：target 根路径去斜杠后等于自身前缀。
+func selfLoopsBack(e *Entry) bool {
+	root := strings.Trim(strings.TrimSuffix(e.Parsed.Root, "/"), "/")
+	if root == "" {
+		return false
+	}
+	return root == strings.Trim(e.Route.Prefix, "/")
+}
+
+// selfPrefixesLocked 返回当前内存表中的自指前缀（调用方需持有读锁或写锁）。
+func (m *Manager) selfPrefixesLocked() []string {
+	out := make([]string, 0)
+	for p, e := range m.m {
+		if e.Self {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 // Upsert 新增或更新路由（写库 + 热加载）
 func (m *Manager) Upsert(r models.Route) error {
 	e, err := m.buildEntry(r)
@@ -86,6 +161,7 @@ func (m *Manager) Upsert(r models.Route) error {
 	m.mu.Lock()
 	m.m[r.Prefix] = e
 	m.rebuildMultiLocked()
+	m.warnSelfLocked(m.selfPrefixesLocked(), len(m.m))
 	m.mu.Unlock()
 	return nil
 }

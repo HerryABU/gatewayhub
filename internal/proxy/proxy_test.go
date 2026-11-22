@@ -1,20 +1,23 @@
 package proxy
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/gin-gonic/gin"
 
+	"gatewayhub/internal/hopguard"
 	"gatewayhub/internal/models"
 	"gatewayhub/internal/stats"
 )
 
 func newTestManager(baseDomain string, routes ...models.Route) *Manager {
-	m := NewManager(nil, stats.NewWriter(nil, nil, 1, 100, time.Second, 1.0), baseDomain)
+	m := NewManager(nil, stats.NewWriter(nil, nil, 1, 100, time.Second, 1.0), baseDomain, SelfInfo{})
 	m.mu.Lock()
 	for _, r := range routes {
 		if e, err := m.buildEntry(r); err == nil {
@@ -31,7 +34,7 @@ func activeRoute(prefix, target string) models.Route {
 }
 
 func TestMatchSubdomain(t *testing.T) {
-	m := NewManager(nil, nil, "localhost")
+	m := NewManager(nil, nil, "localhost", SelfInfo{})
 	cases := []struct {
 		host   string
 		prefix string
@@ -53,7 +56,7 @@ func TestMatchSubdomain(t *testing.T) {
 	}
 
 	// 禁用子域名路由：baseDomain 为空
-	m2 := NewManager(nil, nil, "")
+	m2 := NewManager(nil, nil, "", SelfInfo{})
 	if _, ok := m2.matchSubdomain("java-order.localhost"); ok {
 		t.Error("baseDomain 为空应禁用子域名路由")
 	}
@@ -230,5 +233,87 @@ func TestSanitizeRest(t *testing.T) {
 		if got := sanitizeRest(c.path, c.prefix); got != c.want {
 			t.Errorf("sanitizeRest(%q,%q) = %q, want %q", c.path, c.prefix, got, c.want)
 		}
+	}
+}
+
+// startSelfGateway 起一个「能转发给自己」的网关：先起 httptest.Server，再把它的
+// 地址交给 Manager 建自指路由（target 只有运行后才知道）。
+func startSelfGateway(t *testing.T, maxHops int) (*Manager, string) {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	var m *Manager
+	r := gin.New()
+	r.NoRoute(func(c *gin.Context) {
+		if m == nil || !m.Matchable(c.Request.URL.Path, c.Request.Host) {
+			c.String(http.StatusNotFound, "nf")
+			return
+		}
+		m.Handle(c)
+	})
+	gw := httptest.NewServer(r)
+	t.Cleanup(gw.Close)
+	m = NewManager(nil, stats.NewWriter(nil, nil, 1, 100, time.Second, 1.0), "",
+		SelfInfo{Port: mustAtoi(t, portOf(gw.URL)), MaxHops: maxHops})
+	return m, gw.URL
+}
+
+func mustAtoi(t *testing.T, s string) int {
+	t.Helper()
+	n, err := strconv.Atoi(s)
+	if err != nil {
+		t.Fatalf("端口解析失败 %q: %v", s, err)
+	}
+	return n
+}
+
+// TestSelfReferenceChain 自指 + 嵌套：/chain/a → 自身 /chain/b → 真后端。
+// 这是合法用法（把另一个前缀挂到新前缀下），必须能走通，且后端能看出经过了 2 跳。
+func TestSelfReferenceChain(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("hit-backend:" + r.URL.Path + ";hops=" + r.Header.Get(hopguard.Header)))
+	}))
+	defer backend.Close()
+
+	m, gwURL := startSelfGateway(t, 4)
+	if err := m.Upsert(activeRoute("chain/a", gwURL+"/chain/b")); err != nil {
+		t.Fatalf("建自指路由失败: %v", err)
+	}
+	if err := m.Upsert(activeRoute("chain/b", backend.URL)); err != nil {
+		t.Fatalf("建后端路由失败: %v", err)
+	}
+	if e, _ := m.Get("chain/a"); e == nil || !e.Self {
+		t.Fatal("chain/a 应被识别为自指路由")
+	}
+
+	resp, err := http.Get(gwURL + "/chain/a/x")
+	if err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("自指链路应 200，got %d body=%s", resp.StatusCode, body)
+	}
+	if got := string(body); got != "hit-backend:/x;hops=2" {
+		t.Fatalf("自指链结果不符：%q（应为 2 跳到达后端）", got)
+	}
+}
+
+// TestSelfReferenceLoopDetected 配成绕回自己的自指路由必须被跳数上限拦住：
+// 返回 508 而不是把进程拖进无限请求生成。
+func TestSelfReferenceLoopDetected(t *testing.T) {
+	m, gwURL := startSelfGateway(t, 3)
+	if err := m.Upsert(activeRoute("dead", gwURL+"/dead")); err != nil {
+		t.Fatalf("建自指路由失败: %v", err)
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Get(gwURL + "/dead/x")
+	if err != nil {
+		t.Fatalf("请求失败: %v", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusLoopDetected {
+		t.Fatalf("死循环应返回 508，got %d", resp.StatusCode)
 	}
 }

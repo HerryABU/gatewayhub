@@ -32,6 +32,9 @@ type Entry struct {
 	Parsed   target.Parsed
 	Proxy    *httputil.ReverseProxy // 路径模式
 	SubProxy *httputil.ReverseProxy // 子域名模式
+	// Self 表示 target 指向网关自身（自指路由）。仅用于告警与日志，
+	// 不改变转发行为：合法性由 hopguard 的跳数上限保证。
+	Self bool
 }
 
 func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
@@ -54,6 +57,7 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 		ForceAttemptHTTP2:     true,
 	}
 	entry := &Entry{Route: r, Parsed: p}
+	entry.Self = target.IsSelf(p, m.self.Port, m.baseDomain)
 
 	// 路径模式：剥离 /prefix 前缀 + 响应内容重写（加回前缀、注入 <base>）
 	rw := rewrite.New(r.Prefix, p.Root, p.Host)

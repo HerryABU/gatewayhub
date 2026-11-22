@@ -14,6 +14,9 @@ type ServerConfig struct {
 	ReadTimeout  int    `yaml:"read_timeout"`
 	WriteTimeout int    `yaml:"write_timeout"`
 	BaseDomain   string `yaml:"base_domain"` // 子域名后缀，如 localhost / myapp.local；空则禁用子域名路由
+	// MaxHops 限制「target 指向网关自身」时的链式转发深度（自指与嵌套）。
+	// 超过即返回 508，避免配错的自指把进程拖进请求生成器。<=0 用默认值 5。
+	MaxHops int `yaml:"max_hops"`
 }
 
 type DatabaseConfig struct {
@@ -130,6 +133,7 @@ func Default() *Config {
 			ReadTimeout:  30,
 			WriteTimeout: 30,
 			BaseDomain:   "localhost",
+			MaxHops:      5,
 		},
 		Database: DatabaseConfig{Driver: "sqlite", DSN: "data/gateway.db"},
 		JWT: JWTConfig{

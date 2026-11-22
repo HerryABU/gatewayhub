@@ -2,9 +2,11 @@ package target
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 )
 
@@ -85,6 +87,62 @@ func Parse(t string) (Parsed, error) {
 	}
 	p.Scheme = "http"
 	return p, nil
+}
+
+// selfHosts 是对「指向本机」的主机名判定集合。
+// 只列真正会把请求送回本进程的写法，避免把同名的远端机器误判成自己。
+var selfHosts = map[string]bool{
+	"127.0.0.1":                true,
+	"localhost":                true,
+	"::1":                      true,
+	"0.0.0.0":                  true,
+	"host.docker.internal":     true,
+	"gateway.docker.internal":  true,
+	"host.containers.internal": true,
+}
+
+// IsSelf 判断后端地址是否指向网关自身（自指）。
+//
+// 这是**尽力而为**的识别，只用于打日志与提前告警，绝不用来决定「能不能转发」：
+// 判断错了顶多日志不准，判断漏了还有 hopguard 兜底（真自环会在跳数上限处 508），
+// 所以不需要覆盖「公网域名绕回来」这类无法从地址看出来的情况。
+//
+// selfPort 是网关自己的监听端口；baseDomain 非空时同域名的根也算自指
+// （如 base_domain=localhost 时 target=http://localhost:8088）。
+func IsSelf(p Parsed, selfPort int, baseDomain string) bool {
+	if selfPort <= 0 {
+		return false
+	}
+	host, port := splitHostPort(p)
+	if port != selfPort {
+		return false
+	}
+	h := strings.ToLower(host)
+	if selfHosts[h] {
+		return true
+	}
+	if bd := strings.ToLower(strings.TrimSpace(baseDomain)); bd != "" && h == bd {
+		return true
+	}
+	return false
+}
+
+// splitHostPort 拆分 Parsed.Host；缺端口时按 scheme 补默认端口。
+func splitHostPort(p Parsed) (string, int) {
+	host, portStr, err := net.SplitHostPort(p.Host)
+	if err != nil || portStr == "" {
+		// 没有端口（如 http://localhost）：按 scheme 取默认值
+		host = p.Host
+		if p.Scheme == "https" {
+			return strings.Trim(host, "[]"), 443
+		}
+		return strings.Trim(host, "[]"), 80
+	}
+	port, convErr := strconv.Atoi(portStr)
+	if convErr != nil {
+		return host, 0
+	}
+	return host, port
 }
 
 // JoinPath 拼接根路径与请求路径

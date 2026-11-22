@@ -14,6 +14,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"gatewayhub/internal/accesslog"
+	"gatewayhub/internal/hopguard"
 	"gatewayhub/internal/models"
 )
 
@@ -80,6 +81,20 @@ func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, 
 	if m.fileLog.BodyEnabled() {
 		body = accesslog.SniffBody(req)
 	}
+
+	// 自指/嵌套的链式转发：跳数超上限直接 508，不再把请求推给自己。
+	// 这是「允许自指」的前提 —— 没有上限的自指就是一个请求生成器。
+	hops, ok := m.hops.Next(req.Header)
+	if !ok {
+		m.logAccess(req, prefix, kind, http.StatusLoopDetected, 0, 0, clientIP, body)
+		c.JSON(http.StatusLoopDetected, gin.H{
+			"code": http.StatusLoopDetected,
+			"message": fmt.Sprintf("loop detected: 转发跳数超过上限 %d（自指路由 %s 可能绕回了自己）",
+				m.hops.Max(), prefix),
+		})
+		return
+	}
+	hopguard.Stamp(req.Header, hops)
 
 	if isUpgrade(req) {
 		// WebSocket：跳过请求超时，避免长连接被掐断
