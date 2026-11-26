@@ -121,6 +121,12 @@ const prefixShimTemplate = `(function(){
 // shimScriptRe 用于判断页面里是否已经注入过（例如后端自己在 <head> 里回显了上游 HTML）。
 var shimScriptRe = regexp.MustCompile(`data-gateway-prefix-shim`)
 
+// shimBlockRe 匹配完整的 shim script 块，跨系统嵌套时用它把内层注入的局部前缀
+// 更新成外层知道的完整链：NVS(/gwh/) → GWh(/go-nvs/) 这类双向代理下，
+// 若外层只因「已有 shim」就跳过，页面会留下 base=/gwh/ 与 P=/go-nvs 不一致，
+// 相对资源被解析到 /gwh/assets 而不是 /gwh/go-nvs/assets，整站 404。
+var shimBlockRe = regexp.MustCompile(`(?s)<script[^>]*data-gateway-prefix-shim[^>]*>.*?</script>`)
+
 // prefixShim 生成带具体前缀的注入片段。
 func (rw *Rewriter) prefixShim() string {
 	p := rw.gatewayPath()
@@ -135,13 +141,17 @@ func (rw *Rewriter) prefixShim() string {
 	return "<script data-gateway-prefix-shim=\"1\">" + js + "</script>"
 }
 
-// injectShim 把兜底脚本插到 <head> 之后（若已有则跳过）。
+// injectShim 把兜底脚本插到 <head> 之后。
 // 必须早于任何应用脚本执行，故与 <base> 一起注入在 head 开头。
+// 已有 shim 时不再新增，但会更新为当前前缀（跨系统嵌套时内层只写了局部前缀）。
 func (rw *Rewriter) injectShim(s string) string {
-	if shimScriptRe.MatchString(s) {
-		return s
-	}
 	shim := rw.prefixShim()
+	if shimScriptRe.MatchString(s) {
+		if shim == "" {
+			return s
+		}
+		return shimBlockRe.ReplaceAllString(s, shim)
+	}
 	if shim == "" {
 		return s
 	}

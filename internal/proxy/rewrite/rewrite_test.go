@@ -452,3 +452,21 @@ func TestHTMLAttrSkipsDeferred(t *testing.T) {
 		t.Errorf("普通 src 应改写为文档相对\n%s", out)
 	}
 }
+
+// TestNestedChainUpdatesShim 跨系统嵌套时，外层必须用完整链更新内层已注入的 shim：
+// NVS(/gwh/) → GWh(/go-nvs/) 这类双向代理下，若外层只因「已有 shim」就跳过，
+// 页面会留下 base=/gwh/ 与 P=/go-nvs 不一致，相对资源解析到 /gwh/assets 导致整站 404。
+func TestNestedChainUpdatesShim(t *testing.T) {
+	inner := `<html><head><base href="/inner/"><script data-gateway-prefix-shim="1">(function(){ var P="/inner"; })()</script></head><body><img src="./logo.png"></body></html>`
+	rw := New("outer/inner", "", "backend:8080")
+	out := rw.injectShim(inner)
+	if n := strings.Count(out, "data-gateway-prefix-shim"); n != 1 {
+		t.Fatalf("shim 应恰好一个，got %d\n%s", n, out)
+	}
+	if !strings.Contains(out, `var P="/outer/inner"`) {
+		t.Errorf("shim 前缀未更新为完整链:\n%s", out)
+	}
+	if strings.Contains(out, `var P="/inner"`) {
+		t.Errorf("仍残留内层局部前缀:\n%s", out)
+	}
+}
