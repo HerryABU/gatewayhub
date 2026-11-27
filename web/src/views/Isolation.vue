@@ -117,16 +117,21 @@
           <template #default="{ row }"><span class="mono">{{ row.target }}</span></template>
         </el-table-column>
 
-        <el-table-column :label="t('isolation.mode')" width="168">
+        <el-table-column :label="t('isolation.mode')" width="210">
           <template #default="{ row }">
-            <el-select
-              :model-value="row.mode"
-              size="small"
-              :disabled="!enabled"
-              @change="(v) => changeMode(row, v)"
-            >
-              <el-option v-for="m in modes" :key="m.value" :value="m.value" :label="m.label" />
-            </el-select>
+            <div class="mode-cell">
+              <el-select
+                :model-value="row.mode"
+                size="small"
+                :disabled="!enabled"
+                @change="(v) => changeMode(row, v)"
+              >
+                <el-option v-for="m in modes" :key="m.value" :value="m.value" :label="m.label" />
+              </el-select>
+              <el-button link type="primary" size="small" :loading="probing === row.name" @click="smartProbe(row)">
+                🔍 识别
+              </el-button>
+            </div>
           </template>
         </el-table-column>
 
@@ -220,6 +225,7 @@ const auditFile = ref('')
 const enabled = ref(false)
 const loaded = ref(false)
 const loading = ref(false)
+const probing = ref('')
 const reloading = ref(false)
 const auditLoading = ref(false)
 const audit = ref([])
@@ -324,6 +330,28 @@ async function loadAudit() {
   } catch (e) {
   } finally {
     auditLoading.value = false
+  }
+}
+
+// 智能识别：探测后端该用哪种去头模式，推荐不一致时询问是否切换。
+async function smartProbe(row) {
+  if (!row.target) return
+  probing.value = row.name
+  try {
+    const res = await api.probeIsolationMode(row.target, row.name)
+    if (res.code !== 0) { ElMessage.error(res.message || '识别失败'); return }
+    const r = res.data
+    const txt = `识别结果：${r.mode}（${r.confidence} 置信度）\n${r.reason}`
+    if (r.mode === row.mode) {
+      ElMessage.success({ message: txt, duration: 6000 })
+      return
+    }
+    await ElMessageBox.confirm(txt + '\n\n是否切换？', '智能识别模式', { type: 'warning' })
+    await changeMode(row, r.mode)
+  } catch (e) {
+    if (e !== 'cancel' && e !== 'close' && e?.response?.data?.message) ElMessage.error(e.response.data.message)
+  } finally {
+    probing.value = ''
   }
 }
 
@@ -525,5 +553,14 @@ onBeforeUnmount(stopTimer)
 }
 .to {
   font-weight: 600;
+}
+.mode-cell {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.mode-cell .el-select {
+  flex: 1;
+  min-width: 0;
 }
 </style>

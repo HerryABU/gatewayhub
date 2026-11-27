@@ -73,6 +73,7 @@ export default {
   backupDelete: (id) => api.delete(`/backup/${id}`),
   // 路径隔离网关
   isolationServices: () => api.get('/isolation/services'),
+  probeIsolationMode: (target, service) => api.post('/isolation/probe', { target, service }),
   isolationMetrics: () => api.get('/isolation/metrics'),
   isolationAudit: (limit = 50) => api.get('/isolation/audit', { params: { limit } }),
   setIsolationMode: (name, mode) => api.patch(`/isolation/services/${encodeURIComponent(name)}/mode`, { mode }),

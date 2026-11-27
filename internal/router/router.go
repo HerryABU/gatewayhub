@@ -91,6 +91,7 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 
 				// 路径隔离网关：配置/状态/指标/降级/热加载/审计
 				iso := isohandlers.New(h.Iso, h.Cfg.Isolation.File)
+				admin.POST("/isolation/probe", iso.Probe)
 				admin.GET("/isolation/services", iso.List)
 				admin.GET("/isolation/metrics", iso.Metrics)
 				admin.GET("/isolation/audit", iso.Audit)

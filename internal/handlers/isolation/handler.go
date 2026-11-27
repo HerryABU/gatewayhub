@@ -4,10 +4,12 @@ package isolation
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
 	isoengine "gatewayhub/internal/isolation/engine"
+	isoprobe "gatewayhub/internal/isolation/probe"
 )
 
 // Handler 是隔离网关管理接口处理器。
@@ -66,4 +68,24 @@ func (h *Handler) ok(c *gin.Context, data any) {
 // fail 输出统一失败结构（HTTP 200 + 业务码，与网关其他接口一致）。
 func (h *Handler) fail(c *gin.Context, code int, msg string) {
 	c.JSON(http.StatusOK, gin.H{"code": code, "message": msg})
+}
+
+// Probe 智能识别后端该用哪种去头模式（pass-through / strip / isolated）。
+//
+// POST /api/isolation/probe   body: {"target":"http://host:port","service":"openlist"}
+func (h *Handler) Probe(c *gin.Context) {
+	var body struct {
+		Target  string `json:"target" binding:"required"`
+		Service string `json:"service"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		h.fail(c, 1002, "请填写目标地址")
+		return
+	}
+	res, err := isoprobe.Detect(body.Target, body.Service, 5*time.Second)
+	if err != nil {
+		h.fail(c, 1006, "探测失败："+err.Error())
+		return
+	}
+	h.ok(c, res)
 }
