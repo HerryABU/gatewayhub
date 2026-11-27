@@ -5,6 +5,7 @@ import (
 	"compress/flate"
 	"compress/gzip"
 	"compress/zlib"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -147,5 +148,51 @@ func TestEncodingOfIdentity(t *testing.T) {
 		if strings.ToLower(raw) == "x-gzip" && enc != encGzip {
 			t.Errorf("x-gzip 应归一到 gzip，got %q", enc)
 		}
+	}
+}
+
+func TestReadBodySizeLimit(t *testing.T) {
+	old := MaxBodyBytes
+	MaxBodyBytes = 64
+	defer func() { MaxBodyBytes = old }()
+
+	// Content-Length 已知且超限：不读，body 保持完整
+	payload := strings.Repeat("0123456789abcdef", 4) + "X" // 65 字节 > 上限 64
+	resp := respWith([]byte(payload), "")
+	resp.ContentLength = int64(len(payload))
+	_, _, _, err := readBody(resp)
+	if !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("超限应返回 ErrBodyTooLarge，got %v", err)
+	}
+	got, _ := io.ReadAll(resp.Body)
+	if len(got) != len(payload) {
+		t.Fatalf("超限后 body 必须原样保留，got %d 字节", len(got))
+	}
+
+	// 未知长度（chunked）：多读的 1 字节要拼回，不能截断
+	resp2 := respWith([]byte(strings.Repeat("x", 100)), "")
+	resp2.ContentLength = -1
+	_, _, _, err = readBody(resp2)
+	if !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("chunked 超限应返回 ErrBodyTooLarge，got %v", err)
+	}
+	got, _ = io.ReadAll(resp2.Body)
+	if len(got) != 100 {
+		t.Fatalf("chunked 超限后应完整还原 100 字节，got %d", len(got))
+	}
+}
+
+func TestDecodeGzipBomb(t *testing.T) {
+	old := MaxBodyBytes
+	MaxBodyBytes = 1024
+	defer func() { MaxBodyBytes = old }()
+
+	var buf bytes.Buffer
+	zw := gzip.NewWriter(&buf)
+	_, _ = zw.Write(bytes.Repeat([]byte("A"), 100*1024))
+	_ = zw.Close()
+
+	if _, err := decodeGzip(buf.Bytes(), MaxBodyBytes); !errors.Is(err, ErrBodyTooLarge) {
+		t.Fatalf("解压炸弹应被拦，got %v", err)
 	}
 }

@@ -171,7 +171,8 @@ func TestRewriteJS(t *testing.T) {
 		// 非导航字面量一律不动：文本层判不出「URL 还是请求体数据」，由运行期 shim 处理
 		`fetch("/api/site-info")`,
 		`axios.get('/api/categories')`,
-		`import("/assets/chunk.js")`,
+		// Vite 懒加载 chunk：资源 URL 必须改写（用户要求覆盖内联脚本拼接形式）
+		`import("/app/assets/chunk.js")`,
 		`const x="/"`,
 		// 整页导航：保留前缀绝对（最稳，不依赖 document base）
 		`location.href='/app/login'`,
@@ -182,8 +183,8 @@ func TestRewriteJS(t *testing.T) {
 			t.Errorf("rewriteJS 未包含 %q\n输出:\n%s", c, out)
 		}
 	}
-	if contains(out, "/app/assets/") {
-		t.Errorf("JS 资源字面量不应被静态改写:\n%s", out)
+	if !contains(out, `fetch("/api/site-info")`) || !contains(out, `axios.get('/api/categories')`) {
+		t.Errorf("请求体/API 字面量不能被误改:\n%s", out)
 	}
 }
 
@@ -193,10 +194,14 @@ func TestRewriteJSMidFileImport(t *testing.T) {
 	sb.WriteString(`const runtime="` + strings.Repeat("x", 80*1024) + `";`)
 	sb.WriteString(`const routes=[{path:"/home",component:()=>import("/assets/AuthorHome-abc.js")}];`)
 	sb.WriteString(`import("/assets/core-def.js");`)
-	// 大文件中部也不改写：避免「预检窗口漏判」这类历史问题的同时，
-	// 彻底消除把业务数据当路径改写的风险（见 TestRewriteJSSkipsAPIPaths）。
-	if out := string(rw.rewriteJS([]byte(sb.String()))); out != sb.String() {
-		t.Errorf("大文件中的 import 不应被静态改写")
+	// 大文件中部也必须改写：Vite 的懒加载路由表常位于 bundle 中部，
+	// 只看文件头部的「预检窗口」会漏判导致 chunk 404。
+	out := string(rw.rewriteJS([]byte(sb.String())))
+	if !contains(out, `import("/app/assets/AuthorHome-abc.js")`) || !contains(out, `import("/app/assets/core-def.js")`) {
+		t.Errorf("大文件中部的 import 应被改写:\n%s", out[:400])
+	}
+	if !contains(out, `path:"/home"`) {
+		t.Errorf("业务数据字段不能被改写")
 	}
 }
 func TestInjectBase(t *testing.T) {

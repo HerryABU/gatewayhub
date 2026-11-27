@@ -16,6 +16,7 @@ import (
 	"gatewayhub/internal/accesslog"
 	"gatewayhub/internal/hopguard"
 	"gatewayhub/internal/models"
+	"gatewayhub/internal/proxy/rewrite"
 )
 
 // errorHandler 统一的后端错误响应（502/504）
@@ -75,6 +76,10 @@ func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, 
 	start := time.Now()
 	sw := &statusWriter{ResponseWriter: c.Writer, status: http.StatusOK}
 	req := c.Request
+	// 改写审计载体：ModifyResponse 通过 resp.Request context 回填，
+	// 转发结束后由本函数统一落盘，不在响应头里暴露内部信息。
+	rewriteAudit := &rewrite.Audit{}
+	req = rewrite.WithAudit(req, rewriteAudit)
 
 	// 请求体片段：必须在转发前嗅探（转发会消费 Body），SniffBody 会完整还原读流
 	var body string
@@ -117,6 +122,32 @@ func (m *Manager) serve(c *gin.Context, entry *Entry, p *httputil.ReverseProxy, 
 	})
 
 	m.logAccess(req, prefix, kind, sw.status, sw.bytes, elapsed, clientIP, body)
+	m.logRewrite(req, prefix, kind, rewriteAudit)
+}
+
+// logRewrite 落盘一条改写审计（log/rewrite/<date>/<HH>.log）。
+// 只有真的改写过、或明确跳过（超限/编码不支持）才记，避免每条静态请求都刷日志。
+func (m *Manager) logRewrite(req *http.Request, prefix, kind string, a *rewrite.Audit) {
+	if m.fileLog == nil || a == nil || (a.Hits == 0 && a.Skip == "") {
+		return
+	}
+	err := m.fileLog.LogCategory(accesslog.CategoryRewrite, accesslog.Entry{
+		Method:        req.Method,
+		Path:          req.URL.Path,
+		Query:         req.URL.RawQuery,
+		IP:            clientIPFrom(req.RemoteAddr, req.Header),
+		UA:            req.UserAgent(),
+		RoutePrefix:   prefix,
+		Kind:          kind,
+		RewriteHits:   a.Hits,
+		RewriteChain:  a.Chain,
+		RewriteSkip:   a.Skip,
+		RewriteKind:   a.Kind,
+		RewriteStatus: a.Status,
+	})
+	if err != nil {
+		log.Printf("[accesslog] rewrite audit failed: %v", err)
+	}
 }
 
 // logRejected 记录「命中路由但被拒」的请求（路由已禁用等），保证访问日志不缺口。

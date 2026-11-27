@@ -26,13 +26,31 @@ func WithInboundChain(req *http.Request, chain string) {
 	*req = *req.WithContext(context.WithValue(req.Context(), inboundChainKey{}, chain))
 }
 
-// InboundChain 读取本跳收到的前缀链；非本网关写入的值一律忽略。
+// InboundChain 读取本跳收到的前缀链。
+//
+// 安全边界：外部客户端可以随便发 X-GatewayHub-Prefix-Chain，若直接采信，
+// 就能篡改 <base href>、shim 前缀乃至 Set-Cookie Path（虽然 SanitizeChain
+// 挡住了引号与 ../，仍能把资源指到别的路径造成拒绝服务）。
+// 网关自己的自指转发**必然带着 X-GatewayHub-Hops**（由 hopguard 打上），
+// 因此只在这种请求上信任链头；客户端直连时一律从空链开始。
 func InboundChain(req *http.Request) string {
 	if req == nil {
 		return ""
 	}
+	if req.Header.Get("X-GatewayHub-Hops") == "" {
+		return ""
+	}
 	s, _ := req.Context().Value(inboundChainKey{}).(string)
 	return s
+}
+
+// TrustedChain 在「带着本网关跳数头」的请求上才返回客户端传来的链头，
+// 其余一律返回空串。InboundChain 也用同一判据；Director 写回时必须同步遵守。
+func TrustedChain(req *http.Request) string {
+	if req == nil || req.Header.Get("X-GatewayHub-Hops") == "" {
+		return ""
+	}
+	return req.Header.Get(PrefixChainHeader)
 }
 
 // JoinChain 把本跳前缀接到入站链上；入站为空时本跳就是链首。
