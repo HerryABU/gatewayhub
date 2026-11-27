@@ -14,7 +14,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: '版本号（不含 v，如 1.7.1）。留空则读取 internal/handlers/settings.go'
+        description: '版本号（不含 v，如 1.7.6）。留空则读取 internal/handlers/settings.go'
         required: false
         default: ''
       create_tag:

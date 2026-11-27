@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.5**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.6**
 
 ---
 
@@ -179,11 +179,14 @@ cd web && npm install && npm run dev     # 监听 :5173，代理 /api 到 :8088
   ```
   log/requests/2026-11-22/15.log      # 访问日志
   log/database/2026-11-22/15.log      # 预留：数据库日志（同一条归档链）
+  log/rewrite/2026-11-22/15.log       # 改写审计：命中数、完整前缀链、跳过原因
   log/archive/daily|weekly|monthly|yearly/
   ```
   字段与 NVS 的 `log/requests/<date>/<HH>.log` 完全对齐：`timestamp`（`2006-01-02 15:04:05`）、`user_id`（网关恒 0）、`method`、`path`、`query`、`ip`、`ua`、`status`、`size`、`latency`、`headers`、`body`；网关另加 `route_prefix`（命中的服务）与 `kind`（`path` / `subdomain` / `isolation`）。
 
   隔离网关（`/openlist/` 这类）与普通反代**共用同一个写入器**，未匹配 404、服务禁用、熔断降级也会记一条，日志不再有缺口。
+
+- **改写审计**：每次 `html/css/js` 改写命中、或因超限/编码不支持而跳过，都会在 `log/rewrite/` 落一条，字段含 `rewrite_hits / rewrite_chain / rewrite_kind / rewrite_skip / rewrite_status`。多层嵌套链下每一跳各记一条、`rewrite_chain` 是完整对外前缀，可直接核对「谁在什么时候被改成了什么」。该类别共用同一条分层归档链。
 
 - **日志分层归档（对齐 NVS 的 logarchive）**：日包 7z → 周包 tar.gz → 月包 tar.gz → 年包 tar.xz，启动即跑一次、之后按 `access_log.archive.interval`（默认 24h）循环；幂等（产物比源新则跳过），缺 7z 时日包自动降级为纯 Go tar.gz。也可手动触发：
 

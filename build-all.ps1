@@ -127,7 +127,10 @@ foreach ($t in $targets) {
     Write-Host "[$idx/$($targets.Count)] $($t.Desc) " -NoNewline
 
     Push-Location $root
-    $buildErr = (go build -ldflags="-s -w" -o $outFile . 2>&1)
+    # -s 去符号表、-w 去 DWARF 调试信息、-trimpath 去本机绝对路径：
+    # 三者缺一都会把构建机目录结构泄露到发行版里（panic 栈、strings 都能看到）。
+    # CI 的 release.yml 已带同样参数，本地脚本必须对齐。
+    $buildErr = (go build -trimpath -ldflags="-s -w" -o $outFile . 2>&1)
     $rc = $LASTEXITCODE
     Pop-Location
 

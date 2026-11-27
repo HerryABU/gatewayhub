@@ -377,7 +377,26 @@ services:
 
 实测用例（`internal/proxy`）：三跳链 `/a → /b → /c → gzip 后端`，后端 HTML 里的
 `href="/assets/app.js"` 与 `src="/api/x"` 经三跳改写后变成 `./...`，`<base>` 最终指向
-最外层 `/a/`；响应仍是单层合法 gzip；br 响应逐跳原样透传；外层 ETag 在内层不命中 304。
+完整链 `/a/b/c/`；响应仍是单层合法 gzip；br 响应逐跳原样透传；外层 ETag 在内层不命中 304。
+
+### 改写的覆盖面、成本与留痕
+
+**覆盖面**：HTML 属性（含无引号、`srcset` 描述符、`xlink:href`）、`style=""` 与 `<style>` 里的
+`url()` / `@import`、meta refresh、整页导航 `location.*`、Vite 的 `import("/assets/chunk.js")` 与
+`new URL("/assets/x.css", import.meta.url)`（这两类语法上必是资源 URL，改前缀绝对；
+`fetch("/api/x")` 这类可能是请求体数据，一律交给运行期 shim 在发请求时补前缀，绝不静态猜）。
+协议相对 `//cdn/x`、相对路径 `../x` 与外站域名保持原样。
+
+**成本边界**：代理链路单次响应体改写上限 `rewrite.MaxBodyBytes`（默认 8 MiB），
+解压后的明文同样限长，防「压缩炸弹」；超限或不支持的编码（br/zstd）原样流式透传，
+既不 OOM 也不破坏压缩语义。SSE / WebSocket 因 Content-Type 不在改写白名单，直接透传。
+
+**审计**：命中与跳过都落 `log/rewrite/<date>/<HH>.log`，字段包括
+`rewrite_hits / rewrite_chain / rewrite_kind / rewrite_skip / rewrite_status`；
+普通反代与隔离引擎写同一类别，随四层归档一起留存。
+
+**链头信任**：`X-GatewayHub-Prefix-Chain` 只在请求同时带网关自己打的
+`X-GatewayHub-Hops` 时才采信，客户端直连伪造的链头会被丢弃；最外层摘掉响应里的内部头。
 
 ---
 
