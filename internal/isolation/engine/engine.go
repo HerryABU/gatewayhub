@@ -25,6 +25,7 @@ import (
 	"gatewayhub/internal/isolation/forward"
 	"gatewayhub/internal/isolation/matcher"
 	"gatewayhub/internal/isolation/metrics"
+	"gatewayhub/internal/proxy/rewrite"
 	"gatewayhub/internal/target"
 )
 
@@ -279,8 +280,14 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		body = accesslog.SniffBody(r)
 	}
 
+	// 改写审计载体：与 DB 路由链路共用同一套字段与日志类别。
+	rewriteAudit := &rewrite.Audit{}
+	r = rewrite.WithAudit(r, rewriteAudit)
+
 	prefix := e.serve(rec, r)
 	elapsed := time.Since(start)
+
+	e.logRewrite(r, prefix, rewriteAudit)
 
 	if lg := e.loggerOf(); lg != nil {
 		err := lg.Log(accesslog.Entry{
@@ -301,6 +308,31 @@ func (e *Engine) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			diag.Logf(diag.ConfigError, prefix, "访问日志写入失败: %v", err)
 		}
+	}
+}
+
+// logRewrite 把隔离链路的改写行为落到 log/rewrite/，与普通代理同一类别、同一字段。
+func (e *Engine) logRewrite(r *http.Request, prefix string, a *rewrite.Audit) {
+	lg := e.loggerOf()
+	if lg == nil || a == nil || (a.Hits == 0 && a.Skip == "") {
+		return
+	}
+	err := lg.LogCategory(accesslog.CategoryRewrite, accesslog.Entry{
+		Method:        r.Method,
+		Path:          r.URL.Path,
+		Query:         r.URL.RawQuery,
+		IP:            forward.ClientIP(r.RemoteAddr, r.Header, e.trustProxies),
+		UA:            r.UserAgent(),
+		RoutePrefix:   strings.TrimPrefix(prefix, "/"),
+		Kind:          "isolation",
+		RewriteHits:   a.Hits,
+		RewriteChain:  a.Chain,
+		RewriteSkip:   a.Skip,
+		RewriteKind:   a.Kind,
+		RewriteStatus: a.Status,
+	})
+	if err != nil {
+		diag.Logf(diag.ConfigError, prefix, "改写审计落盘失败: %v", err)
 	}
 }
 

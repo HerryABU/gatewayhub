@@ -27,6 +27,9 @@ import (
 const (
 	CategoryRequests = "requests"
 	CategoryDatabase = "database"
+	// CategoryRewrite 记录改写行为：命中数、完整前缀链、跳过原因。
+	// 单列一类是为了让「谁在什么时候被改了什么」可检索，而不是只在 stdout 一闪而过。
+	CategoryRewrite = "rewrite"
 )
 
 // TimeLayout 是 timestamp 字段的格式，与 NVS 完全一致（本地时间，无时区后缀）。
@@ -51,6 +54,13 @@ type Entry struct {
 	Body        string            `json:"body"`                   // 请求体片段（≤64KB，见 SniffBody）
 	RoutePrefix string            `json:"route_prefix,omitempty"` // 网关扩展：命中的服务前缀
 	Kind        string            `json:"kind,omitempty"`         // 网关扩展：path / isolation / subdomain
+
+	// 改写审计字段（仅 rewrite 类别写，requests 类别留空，保持 NVS 结构兼容）
+	RewriteHits   int    `json:"rewrite_hits,omitempty"`   // 改写命中数
+	RewriteChain  string `json:"rewrite_chain,omitempty"`  // 嵌套链的完整对外前缀
+	RewriteSkip   string `json:"rewrite_skip,omitempty"`   // 跳过原因：too_large / unsupported_encoding / decode_failed
+	RewriteKind   string `json:"rewrite_kind,omitempty"`   // html / css / js
+	RewriteStatus int    `json:"rewrite_status,omitempty"` // 响应状态码
 }
 
 // Option 是 FileLogger 的可选项。

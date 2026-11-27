@@ -60,7 +60,7 @@ func (rt *runtime) rewrite(pr *httputil.ProxyRequest) {
 
 	// 6) 嵌套链：把对外前缀逐跳累加（与普通反代共用同一个头）。
 	//    最内层据此把 <base>/资源路径写到完整链前缀下，避免多跳后资源 404。
-	inbound := rewrite.SanitizeChain(pr.In.Header.Get(rewrite.PrefixChainHeader))
+	inbound := rewrite.SanitizeChain(rewrite.TrustedChain(pr.In))
 	rewrite.WithInboundChain(pr.Out, inbound)
 	pr.Out.Header.Set(rewrite.PrefixChainHeader,
 		rewrite.JoinChain(inbound, strings.Trim(cfg.Prefix, "/")))

@@ -213,6 +213,11 @@ func bodyEligible(resp *http.Response) bool {
 // rewriteBody 读入（必要时解压）→ 字面量改写 → 明文写出。
 // 任何一步失败都恢复原始字节原样透传：代理宁可不改，也不能把页面改坏。
 func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *metrics.Counters, kind respond.Kind, enc, prefix string) {
+	audit := rewrite.AuditOf(resp.Request)
+	if audit != nil {
+		audit.Chain = strings.TrimPrefix(prefix, "/")
+		audit.Status = resp.StatusCode
+	}
 	// 先按上限多读 1 字节判断是否超限；超限时把已读片段与剩余流拼回去，绝不截断响应
 	buf, err := io.ReadAll(io.LimitReader(resp.Body, cfg.MaxRewriteBytes+1))
 	if err != nil {
@@ -223,6 +228,7 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 		return
 	}
 	if int64(len(buf)) > cfg.MaxRewriteBytes {
+		audit.MarkSkip("too_large")
 		cnt.BodySkipped.Add(1)
 		diag.Logf(diag.RewriteFailed, cfg.Name, "响应体超过改写上限 %d 字节，流式原样透传: %s",
 			cfg.MaxRewriteBytes, requestPath(resp))
@@ -233,6 +239,7 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 	origin := resp.Body
 	decoded, _, decErr := respond.Decode(buf, enc)
 	if decErr != nil {
+		audit.MarkSkip("decode_failed")
 		cnt.HTMLFailures.Add(1)
 		diag.Logf(diag.RewriteFailed, cfg.Name, "响应体解压失败（%s），原样透传: %v", enc, decErr)
 		restoreBody(resp, buf, origin)
@@ -251,10 +258,12 @@ func (rt *runtime) rewriteBody(resp *http.Response, cfg *config.Service, cnt *me
 	}
 	if hits == 0 {
 		// 无命中：连解压结果都不使用，原样（含压缩）透传，零额外开销
+		audit.MarkSkip("no_hit")
 		restoreBody(resp, buf, origin)
 		return
 	}
 	_ = origin.Close()
+	audit.MarkHit(kindName(kind), hits)
 	// 改写后输出明文：删掉编码头，避免浏览器按 gzip 解码明文（FR-12）
 	resp.Header.Del("Content-Encoding")
 	// 体已变：后端 ETag/Last-Modified 描述的是原文，必须换成本网关按改写后字节算的指纹。
@@ -319,4 +328,16 @@ func requestPath(resp *http.Response) string {
 // 这里默认不信任（只在未被 ServeHTTP 复用的场景下使用）。
 func proxyIP(r *http.Request) string {
 	return forward.ClientIP(r.RemoteAddr, r.Header, false)
+}
+
+// kindName 把 respond.Kind 转成审计用的短名（不能直接 string(kind)，那是 rune）。
+func kindName(k respond.Kind) string {
+	switch k {
+	case respond.KindHTML:
+		return "html"
+	case respond.KindCSS:
+		return "css"
+	default:
+		return "other"
+	}
 }
