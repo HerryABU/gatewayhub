@@ -65,6 +65,13 @@
             :placeholder="t('route.descriptionHint')"
           />
         </el-form-item>
+        <el-form-item label="Cookie 帽子">
+          <el-input v-model="form.cookie_hat" placeholder="可选，如 app__（请求侧脱帽 + 响应侧加帽）" />
+          <div class="gh-dim">留空则只收紧 Path；填写后后端可正常读到自己下的 cookie。</div>
+        </el-form-item>
+        <el-form-item label="丢弃外来 Cookie">
+          <el-switch v-model="form.drop_foreign_cookies" />
+        </el-form-item>
         <el-form-item :label="t('route.timeout')">
           <el-input-number v-model="form.timeout" :min="1" :max="60" /> <span class="gh-dim">s</span>
         </el-form-item>
@@ -100,7 +107,7 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
 const formRef = ref()
-const form = reactive({ name: '', prefix: '', target: '', description: '', timeout: 5, interval: 30, status: 'active' })
+const form = reactive({ name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, timeout: 5, interval: 30, status: 'active' })
 
 const rules = {
   name: [{ required: true, message: 'Name', trigger: 'blur' }],
@@ -120,12 +127,12 @@ async function load() {
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { name: '', prefix: '', target: '', description: '', timeout: 5, interval: 30, status: 'active' })
+  Object.assign(form, { name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, timeout: 5, interval: 30, status: 'active' })
   dialogVisible.value = true
 }
 function openEdit(row) {
   isEdit.value = true
-  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, description: row.description || '', timeout: row.timeout, interval: row.interval || 30, status: row.status })
+  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, description: row.description || '', cookie_hat: row.cookie_hat || '', drop_foreign_cookies: !!row.drop_foreign_cookies, timeout: row.timeout, interval: row.interval || 30, status: row.status })
   dialogVisible.value = true
 }
 

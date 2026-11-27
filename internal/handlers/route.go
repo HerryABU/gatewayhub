@@ -28,6 +28,8 @@ type routeReq struct {
 	Timeout     int    `json:"timeout"`
 	Interval    int    `json:"interval"`
 	Status      string `json:"status"`
+	CookieHat   string `json:"cookie_hat"`
+	DropForeign bool   `json:"drop_foreign_cookies"`
 }
 
 // validatePrefix 校验转发名（支持多级前缀，如 "v2/beta"，每段以小写字母开头）
@@ -60,8 +62,8 @@ func (h *Handler) ListRoutes(c *gin.Context) {
 	historyMap := h.Health.HistoryMap()
 	type item struct {
 		models.Route
-		Health    string               `json:"health"`
-		LatencyMs int64                `json:"latency_ms"`
+		Health    string                `json:"health"`
+		LatencyMs int64                 `json:"latency_ms"`
 		History   []health.HistoryPoint `json:"history"`
 	}
 	list := make([]item, 0, len(routes))
@@ -94,6 +96,8 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		Timeout     int    `json:"timeout"`
 		Interval    int    `json:"interval"`
 		Status      string `json:"status"`
+		CookieHat   string `json:"cookie_hat"`
+		DropForeign bool   `json:"drop_foreign_cookies"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -153,6 +157,8 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		Timeout:     timeout,
 		Interval:    interval,
 		Status:      status,
+		CookieHat:   strings.TrimSpace(req.CookieHat),
+		DropForeign: req.DropForeign,
 	}
 	if err := h.DB.Create(&route).Error; err != nil {
 		h.fail(c, 2001, "创建失败")
@@ -219,6 +225,8 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 	route.Timeout = timeout
 	route.Interval = interval
 	route.Status = status
+	route.CookieHat = strings.TrimSpace(req.CookieHat)
+	route.DropForeign = req.DropForeign
 	if err := h.DB.Save(&route).Error; err != nil {
 		h.fail(c, 2001, "更新失败")
 		return

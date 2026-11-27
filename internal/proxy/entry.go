@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"gatewayhub/internal/isolation/cookie"
 	"gatewayhub/internal/models"
 	"gatewayhub/internal/proxy/rewrite"
 	"gatewayhub/internal/target"
@@ -73,14 +74,37 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 			rest := sanitizeRest(req.URL.Path, r.Prefix)
 			applyForwardHeaders(req, p)
 			req.URL.Path = target.JoinPath(p.Root, rest)
+			// 完整 cookie 隔离：请求侧只脱本服务帽，别家帽子按策略丢弃/保留。
+			if r.CookieHat != "" {
+				cookie.RewriteRequest(req.Header, r.CookieHat, r.DropForeign)
+			}
 			// 仅接受 gzip，便于在 ModifyResponse 中解压重写后再压缩
 			req.Header.Set("Accept-Encoding", "gzip")
 		},
-		Transport:      transport,
-		ModifyResponse: rw.Modify,
-		FlushInterval:  -1,
-		BufferPool:     poolBuffer{},
-		ErrorHandler:   m.errorHandler,
+		Transport: transport,
+		ModifyResponse: func(resp *http.Response) error {
+			var cookies []string
+			if r.CookieHat != "" {
+				cookies = resp.Header.Values("Set-Cookie")
+				resp.Header.Del("Set-Cookie")
+			}
+			if err := rw.Modify(resp); err != nil {
+				return err
+			}
+			if len(cookies) == 0 {
+				return nil
+			}
+			res := cookie.RewriteSetCookies(cookies, cookie.SetCookieOptions{
+				Hat: r.CookieHat, Prefix: "/" + r.Prefix, BackendRoot: p.Root,
+			})
+			for _, v := range res.Values {
+				resp.Header.Add("Set-Cookie", v)
+			}
+			return nil
+		},
+		FlushInterval: -1,
+		BufferPool:    poolBuffer{},
+		ErrorHandler:  m.errorHandler,
 	}
 
 	// 子域名模式：前缀在 Host 头里，路径即后端根路径，零重写、零解压，纯透明转发（速度=源站）

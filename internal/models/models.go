@@ -14,14 +14,17 @@ type User struct {
 
 // Route 路由配置表
 type Route struct {
-	ID          uint      `gorm:"primaryKey" json:"id"`
-	Name        string    `gorm:"size:100;not null" json:"name"`
-	Prefix      string    `gorm:"size:30;not null;uniqueIndex" json:"prefix"`
-	Target      string    `gorm:"size:500;not null" json:"target"`
-	Description string    `gorm:"size:500" json:"description"` // 站点介绍：该挂载站是做什么的（访客页展示）
-	Timeout     int       `gorm:"not null;default:5" json:"timeout"`
-	Interval    int       `gorm:"not null;default:30" json:"interval"` // 健康检查间隔（秒），0 用全局默认
-	Status      string    `gorm:"size:20;not null;default:active" json:"status"` // active / inactive
+	ID          uint   `gorm:"primaryKey" json:"id"`
+	Name        string `gorm:"size:100;not null" json:"name"`
+	Prefix      string `gorm:"size:30;not null;uniqueIndex" json:"prefix"`
+	Target      string `gorm:"size:500;not null" json:"target"`
+	Description string `gorm:"size:500" json:"description"` // 站点介绍：该挂载站是做什么的（访客页展示）
+	Timeout     int    `gorm:"not null;default:5" json:"timeout"`
+	Interval    int    `gorm:"not null;default:30" json:"interval"`           // 健康检查间隔（秒），0 用全局默认
+	Status      string `gorm:"size:20;not null;default:active" json:"status"` // active / inactive
+	// CookieHat 非空时启用完整 cookie 隔离：请求侧脱帽 + 响应侧加帽 + Path 收紧。
+	CookieHat   string    `gorm:"size:64;default:''" json:"cookie_hat"`
+	DropForeign bool      `gorm:"default:false" json:"drop_foreign_cookies"`
 	CreatedAt   time.Time `json:"created_at"`
 	UpdatedAt   time.Time `json:"updated_at"`
 }
@@ -53,7 +56,7 @@ type Setting struct {
 // IPRule IP 黑名单/白名单规则
 type IPRule struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	IP        string    `gorm:"size:64;not null;uniqueIndex" json:"ip"` // 支持 CIDR，如 1.2.3.0/24
+	IP        string    `gorm:"size:64;not null;uniqueIndex" json:"ip"`      // 支持 CIDR，如 1.2.3.0/24
 	Action    string    `gorm:"size:10;not null;default:deny" json:"action"` // allow / deny
 	Note      string    `gorm:"size:255" json:"note"`
 	CreatedAt time.Time `json:"created_at"`
@@ -62,7 +65,7 @@ type IPRule struct {
 // APIRule API 路径黑名单/白名单规则
 type APIRule struct {
 	ID        uint      `gorm:"primaryKey" json:"id"`
-	Path      string    `gorm:"size:255;not null;uniqueIndex" json:"path"` // 前缀匹配，如 /api/admin
+	Path      string    `gorm:"size:255;not null;uniqueIndex" json:"path"`   // 前缀匹配，如 /api/admin
 	Action    string    `gorm:"size:10;not null;default:deny" json:"action"` // allow / deny
 	Note      string    `gorm:"size:255" json:"note"`
 	CreatedAt time.Time `json:"created_at"`
@@ -110,8 +113,8 @@ const (
 
 // HealthState 健康状态常量（绿/橙/红/灰）
 const (
-	HealthHealthy   = "healthy" // 🟢 绿
-	HealthWarning   = "warning" // 🟠 橙
-	HealthDown      = "down"    // 🔴 红
-	HealthUnknown   = "unknown" // ⚪ 灰
+	HealthHealthy = "healthy" // 🟢 绿
+	HealthWarning = "warning" // 🟠 橙
+	HealthDown    = "down"    // 🔴 红
+	HealthUnknown = "unknown" // ⚪ 灰
 )
