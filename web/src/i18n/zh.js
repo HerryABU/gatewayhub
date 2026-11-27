@@ -111,7 +111,8 @@ export default {
     prefixHint: '3-60 字符，小写字母开头，可用 / 分隔多级（如 v2/beta）',
     targetHint: ':8080 或 :8080/api/v1 或完整 URL，支持 ${ENV}',
     interval: '检查间隔',
-    intervalHint: '每个站点独立探测间隔（5-86400 秒，默认 30）'
+    intervalHint: '每个站点独立探测间隔（5-86400 秒，默认 30）',
+    tlsSkipHint: '宝塔面板 / WSL 内网服务常用自签名证书，开启后才不会 502；仅影响网关到后端的连接，不影响浏览器访问网关。'
   },
   stats: {
     totalPV: '总 PV',

@@ -1,6 +1,7 @@
 package proxy
 
 import (
+	"crypto/tls"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -47,8 +48,19 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 	if timeout <= 0 {
 		timeout = 5 * time.Second
 	}
-	// 两个代理共享同一 Transport，复用后端连接池
+	// 两个代理共享同一 Transport，复用后端连接池。
+	//
+	// TLSClientConfig 只在路由显式开启 TLSSkipVerify 时设置：宝塔面板 / WSL 内网服务
+	// 用自签名证书，默认校验会直接 502（而健康检查的 TCP 兜底还会误报 healthy）。
+	// 注意这是「网关→后端」这一段，浏览器→网关的 TLS 不受影响；
+	// 默认仍严格校验，避免把正常外站降级成可被中间人攻击。
 	transport := &http.Transport{
+		TLSClientConfig: func() *tls.Config {
+			if !r.TLSSkipVerify {
+				return nil
+			}
+			return &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12}
+		}(),
 		DialContext:           (&net.Dialer{Timeout: timeout, KeepAlive: 30 * time.Second}).DialContext,
 		MaxIdleConns:          256,
 		MaxIdleConnsPerHost:   64,

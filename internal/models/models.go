@@ -23,10 +23,13 @@ type Route struct {
 	Interval    int    `gorm:"not null;default:30" json:"interval"`           // 健康检查间隔（秒），0 用全局默认
 	Status      string `gorm:"size:20;not null;default:active" json:"status"` // active / inactive
 	// CookieHat 非空时启用完整 cookie 隔离：请求侧脱帽 + 响应侧加帽 + Path 收紧。
-	CookieHat   string    `gorm:"size:64;default:''" json:"cookie_hat"`
-	DropForeign bool      `gorm:"default:false" json:"drop_foreign_cookies"`
-	CreatedAt   time.Time `json:"created_at"`
-	UpdatedAt   time.Time `json:"updated_at"`
+	CookieHat   string `gorm:"size:64;default:''" json:"cookie_hat"`
+	DropForeign bool   `gorm:"default:false" json:"drop_foreign_cookies"`
+	// TLSSkipVerify 跳过后端 HTTPS 证书校验。默认关闭；宝塔面板 / 内网自签服务
+	// 需显式打开。仅影响网关→后端这一段，不改变浏览器→网关的证书校验。
+	TLSSkipVerify bool      `gorm:"default:false" json:"tls_insecure_skip_verify"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // AccessLog 访问日志表

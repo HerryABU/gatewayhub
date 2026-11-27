@@ -2,6 +2,7 @@ package health
 
 import (
 	"context"
+	"crypto/tls"
 	"net"
 	"net/http"
 	"sync"
@@ -53,6 +54,24 @@ type HistoryPoint struct {
 
 // historyCap 每路由保留的最近探测点数量（分段状态条宽度）
 const historyCap = 90
+
+// insecureClient 返回仅用于「TLS 跳过校验」路由探测的 client。
+// 按超时缓存，避免每条路由每次探测都新建 Transport（连接池会失效）。
+var insecureClients sync.Map // timeout -> *http.Client
+
+func insecureClient(timeout time.Duration) *http.Client {
+	if c, ok := insecureClients.Load(timeout); ok {
+		return c.(*http.Client)
+	}
+	c := &http.Client{
+		Timeout: timeout,
+		Transport: &http.Transport{
+			TLSClientConfig: &tls.Config{InsecureSkipVerify: true, MinVersion: tls.VersionTLS12},
+		},
+	}
+	actual, _ := insecureClients.LoadOrStore(timeout, c)
+	return actual.(*http.Client)
+}
 
 // New 创建健康检查器
 func New(db *gorm.DB, cfg config.HealthConfig) *Checker {
@@ -180,6 +199,21 @@ func (c *Checker) checkRoute(r models.Route) (bool, int64) {
 		}
 	}
 	cancel()
+	// 自签后端（宝塔面板）须按路由开关重试，否则明明能反代却显示 down。
+	// 复用独立 client，避免改动全局默认校验策略。
+	if r.TLSSkipVerify && p.Scheme == "https" {
+		start = time.Now()
+		ctx2, cancel2 := context.WithTimeout(context.Background(), c.timeout)
+		req2, err2 := http.NewRequestWithContext(ctx2, http.MethodGet, healthURL, nil)
+		if err2 == nil {
+			if resp, err2 := insecureClient(c.timeout).Do(req2); err2 == nil {
+				cancel2()
+				resp.Body.Close()
+				return true, time.Since(start).Milliseconds()
+			}
+		}
+		cancel2()
+	}
 	// TCP 兜底探测
 	start = time.Now()
 	conn, err := net.DialTimeout("tcp", p.Host, c.timeout)

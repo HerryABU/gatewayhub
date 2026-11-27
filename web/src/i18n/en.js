@@ -111,7 +111,8 @@ export default {
     prefixHint: '3-60 chars, lowercase, / for multi-level (e.g. v2/beta)',
     targetHint: ':8080 or :8080/api/v1 or full URL, supports ${ENV}',
     interval: 'Check Interval',
-    intervalHint: 'Per-site probe interval (5-86400s, default 30)'
+    intervalHint: 'Per-site probe interval (5-86400s, default 30)',
+    tlsSkipHint: 'Enable for self-signed backends (Baota panel / WSL intranet) to avoid 502. Affects only gateway-to-backend TLS, not browser-to-gateway.'
   },
   stats: {
     totalPV: 'Total PV',

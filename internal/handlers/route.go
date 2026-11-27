@@ -22,14 +22,15 @@ var reservedPrefixes = map[string]bool{
 }
 
 type routeReq struct {
-	Name        string `json:"name"`
-	Target      string `json:"target"`
-	Description string `json:"description"`
-	Timeout     int    `json:"timeout"`
-	Interval    int    `json:"interval"`
-	Status      string `json:"status"`
-	CookieHat   string `json:"cookie_hat"`
-	DropForeign bool   `json:"drop_foreign_cookies"`
+	Name          string `json:"name"`
+	Target        string `json:"target"`
+	Description   string `json:"description"`
+	Timeout       int    `json:"timeout"`
+	Interval      int    `json:"interval"`
+	Status        string `json:"status"`
+	CookieHat     string `json:"cookie_hat"`
+	DropForeign   bool   `json:"drop_foreign_cookies"`
+	TLSSkipVerify bool   `json:"tls_insecure_skip_verify"`
 }
 
 // validatePrefix 校验转发名（支持多级前缀，如 "v2/beta"，每段以小写字母开头）
@@ -89,15 +90,16 @@ func (h *Handler) ListRoutes(c *gin.Context) {
 // CreateRoute POST /api/routes
 func (h *Handler) CreateRoute(c *gin.Context) {
 	var req struct {
-		Name        string `json:"name" binding:"required"`
-		Prefix      string `json:"prefix" binding:"required"`
-		Target      string `json:"target" binding:"required"`
-		Description string `json:"description"`
-		Timeout     int    `json:"timeout"`
-		Interval    int    `json:"interval"`
-		Status      string `json:"status"`
-		CookieHat   string `json:"cookie_hat"`
-		DropForeign bool   `json:"drop_foreign_cookies"`
+		Name          string `json:"name" binding:"required"`
+		Prefix        string `json:"prefix" binding:"required"`
+		Target        string `json:"target" binding:"required"`
+		Description   string `json:"description"`
+		Timeout       int    `json:"timeout"`
+		Interval      int    `json:"interval"`
+		Status        string `json:"status"`
+		CookieHat     string `json:"cookie_hat"`
+		DropForeign   bool   `json:"drop_foreign_cookies"`
+		TLSSkipVerify bool   `json:"tls_insecure_skip_verify"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -150,15 +152,16 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 	}
 
 	route := models.Route{
-		Name:        name,
-		Prefix:      prefix,
-		Target:      strings.TrimSpace(req.Target),
-		Description: strings.TrimSpace(req.Description),
-		Timeout:     timeout,
-		Interval:    interval,
-		Status:      status,
-		CookieHat:   strings.TrimSpace(req.CookieHat),
-		DropForeign: req.DropForeign,
+		Name:          name,
+		Prefix:        prefix,
+		Target:        strings.TrimSpace(req.Target),
+		Description:   strings.TrimSpace(req.Description),
+		Timeout:       timeout,
+		Interval:      interval,
+		Status:        status,
+		CookieHat:     strings.TrimSpace(req.CookieHat),
+		DropForeign:   req.DropForeign,
+		TLSSkipVerify: req.TLSSkipVerify,
 	}
 	if err := h.DB.Create(&route).Error; err != nil {
 		h.fail(c, 2001, "创建失败")
@@ -227,6 +230,7 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 	route.Status = status
 	route.CookieHat = strings.TrimSpace(req.CookieHat)
 	route.DropForeign = req.DropForeign
+	route.TLSSkipVerify = req.TLSSkipVerify
 	if err := h.DB.Save(&route).Error; err != nil {
 		h.fail(c, 2001, "更新失败")
 		return
