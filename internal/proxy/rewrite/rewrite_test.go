@@ -475,3 +475,34 @@ func TestNestedChainUpdatesShim(t *testing.T) {
 		t.Errorf("仍残留内层局部前缀:\n%s", out)
 	}
 }
+
+// TestRewriteUnquotedAttrs 覆盖 HTML5 无引号属性值（example.com 的 <script src=/s.js>）。
+// 这类根绝对路径若漏改，浏览器会请求网关根路径，拿回 SPA 的 HTML 当 JS 执行 →
+// "SyntaxError: Unexpected token '<'"，外站页面直接报错。
+func TestRewriteUnquotedAttrs(t *testing.T) {
+	rw := New("ex", "", "example.com")
+	in := `<html><head><base href="/"></head><body>` +
+		`<script src=/s.js></script>` +
+		`<a href=/docs?x=1>link</a>` +
+		`<img src=/logo.png width=10>` +
+		`<form action=/submit method=post></form>` +
+		`</body></html>`
+	out := string(rw.rewriteHTML([]byte(in)))
+	for _, want := range []string{
+		`src=./s.js>`, `href=./docs?x=1>`, `src=./logo.png width=10>`, `action=./submit method=post>`,
+	} {
+		if !contains(out, want) {
+			t.Errorf("无引号属性未改写，期望含 %q\n输出: %s", want, out)
+		}
+	}
+	// 带引号的老写法不能被破坏
+	if !contains(out, `<base href="/ex/">`) {
+		t.Errorf("base 注入被破坏:\n%s", out)
+	}
+	// 外站/协议相对/相对路径不动
+	keep := `<script src=//cdn.example.com/x.js></script><img src=logo.png>`
+	out2 := string(rw.rewriteHTML([]byte(keep)))
+	if !contains(out2, `src=//cdn.example.com/x.js`) || !contains(out2, `src=logo.png`) {
+		t.Errorf("外站与相对路径不应被改写:\n%s", out2)
+	}
+}

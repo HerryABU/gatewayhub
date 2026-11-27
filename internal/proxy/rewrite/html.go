@@ -11,17 +11,22 @@ var (
 	// 属性名前必须有空白（不能用 \b：`data-src=` 里 src 前是 '-'，\b 成立会被误命中）。
 	// 延迟地址（data-src / data-srcset 等）会被前端再拼一次基准
 	//（vite legacy polyfill：__dynamic_base__ + data-src），提前改写会拼成 /prefix/prefix/...。
-	htmlAttrRe    = regexp.MustCompile(`(?i)(\s(?:src|href|action|poster)\s*=\s*["'])(/[^"'\s>]*)(["'])`)
-	htmlSrcsetRe  = regexp.MustCompile(`(?i)(\ssrcset\s*=\s*["'])([^"']*)(["'])`)
-	metaRefreshRe = regexp.MustCompile(`(?i)(<meta[^>]*content\s*=\s*["'])([^"]*url\s*=\s*/[^"]*)(["'])`)
-	metaURLRe     = regexp.MustCompile(`(?i)(url\s*=\s*)(/[^"'\s]*)`)
-	styleBlockRe  = regexp.MustCompile(`(?is)(<style[^>]*>)(.*?)(</style>)`)
-	styleAttrDRe  = regexp.MustCompile(`(?i)(\bstyle\s*=\s*")([^"]*)(")`)
-	styleAttrSRe  = regexp.MustCompile(`(?i)(\bstyle\s*=\s*')([^']*)(')`)
-	cssURLRe      = regexp.MustCompile(`(?i)url\(\s*(['"]?)(/[^'")\s]+)(['"]?)\s*\)`)
-	cssImportRe   = regexp.MustCompile(`(?i)(@import\s+)(["'])(/[^"']+)(["'])`)
-	scriptBlockRe = regexp.MustCompile(`(?is)(<script\b[^>]*>)(.*?)(</script>)`)
-	scriptSrcRe   = regexp.MustCompile(`(?i)\bsrc\s*=`)
+	htmlAttrRe = regexp.MustCompile(`(?i)(\s(?:src|href|action|poster)\s*=\s*["'])(/[^"'\s>]*)(["'])`)
+	// HTML5 允许属性值不加引号（example.com 就写 `<script src=/s.js>`）。
+	// 旧实现只认带引号的，这类根绝对路径会原样透传 → 浏览器按站点根解析，
+	// 请求打到网关根路径而不是 /prefix/，拿回 SPA 的 HTML 当 JS 执行，
+	// 页面报 "SyntaxError: Unexpected token '<'"。无引号值以空白或 > 结束。
+	htmlAttrBareRe = regexp.MustCompile(`(?i)(\s(?:src|href|action|poster)\s*=\s*)(/[^\s>"']+)`)
+	htmlSrcsetRe   = regexp.MustCompile(`(?i)(\ssrcset\s*=\s*["'])([^"']*)(["'])`)
+	metaRefreshRe  = regexp.MustCompile(`(?i)(<meta[^>]*content\s*=\s*["'])([^"]*url\s*=\s*/[^"]*)(["'])`)
+	metaURLRe      = regexp.MustCompile(`(?i)(url\s*=\s*)(/[^"'\s]*)`)
+	styleBlockRe   = regexp.MustCompile(`(?is)(<style[^>]*>)(.*?)(</style>)`)
+	styleAttrDRe   = regexp.MustCompile(`(?i)(\bstyle\s*=\s*")([^"]*)(")`)
+	styleAttrSRe   = regexp.MustCompile(`(?i)(\bstyle\s*=\s*')([^']*)(')`)
+	cssURLRe       = regexp.MustCompile(`(?i)url\(\s*(['"]?)(/[^'")\s]+)(['"]?)\s*\)`)
+	cssImportRe    = regexp.MustCompile(`(?i)(@import\s+)(["'])(/[^"']+)(["'])`)
+	scriptBlockRe  = regexp.MustCompile(`(?is)(<script\b[^>]*>)(.*?)(</script>)`)
+	scriptSrcRe    = regexp.MustCompile(`(?i)\bsrc\s*=`)
 	// JS 整页导航：location.href / assign / replace 的根相对路径
 	locationRe = regexp.MustCompile(`(?i)(\blocation\.(?:href\s*=|assign\s*\(|replace\s*\()\s*)(["'])(/[^"'\s)]*)(["'])`)
 	// HTML <head> 与 <base>：用于注入/改写 <base href>，欺骗前端路由器基址
@@ -48,6 +53,14 @@ func (rw *Rewriter) rewriteHTML(b []byte) []byte {
 			return m
 		}
 		return sub[1] + rw.rewriteRelative(sub[2]) + sub[3]
+	})
+	// 2b) 无引号属性：同样绝对改相对（example.com 的 <script src=/s.js> 就靠这里）
+	s = htmlAttrBareRe.ReplaceAllStringFunc(s, func(m string) string {
+		sub := htmlAttrBareRe.FindStringSubmatch(m)
+		if len(sub) != 3 {
+			return m
+		}
+		return sub[1] + rw.rewriteRelative(sub[2])
 	})
 
 	// 3) <meta http-equiv="refresh"> 的 content="...url=/x"
