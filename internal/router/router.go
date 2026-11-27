@@ -5,6 +5,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -286,13 +287,61 @@ func jwtAuth(secret string) gin.HandlerFunc {
 	}
 }
 
+// allowedOrigin 判断一个 Origin 是否与请求主机同源。
+//
+// 旧实现把任意 Origin 原样反射并带上 Allow-Credentials: true —— 任何网站都能
+// 用受害浏览器里的 JWT 调本网关的管理 API（CSRF / 会话窃取）。
+// 管理控制台与页面同源，同源策略已经够用，不需要跨域白名单。
+func allowedOrigin(origin, host string) bool {
+	if origin == "" || host == "" {
+		return false
+	}
+	u, err := url.Parse(origin)
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if strings.EqualFold(u.Host, host) {
+		return true
+	}
+	// 本机开发常用 localhost / 127.0.0.1 互换，但**端口必须一致** ——
+	// 不同端口是不同 origin，放行会让本地任意服务读到管理会话。
+	_, originPort, err := net.SplitHostPort(u.Host)
+	if err != nil {
+		return false
+	}
+	_, reqPort, err := net.SplitHostPort(host)
+	if err != nil || originPort != reqPort {
+		return false
+	}
+	return isLoopbackHost(u.Hostname()) && isLoopbackHost(hostPortOnly(host))
+}
+
+func isLoopbackHost(h string) bool {
+	h = strings.ToLower(strings.Trim(strings.TrimSpace(h), "[]"))
+	if h == "localhost" || h == "host.docker.internal" || h == "host.containers.internal" {
+		return true
+	}
+	ip := net.ParseIP(h)
+	return ip != nil && ip.IsLoopback()
+}
+
+func hostPortOnly(host string) string {
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		return h
+	}
+	return host
+}
+
 func corsMiddleware() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		origin := c.GetHeader("Origin")
-		c.Header("Access-Control-Allow-Origin", origin)
-		c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
-		c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
-		c.Header("Access-Control-Allow-Credentials", "true")
+		if allowedOrigin(origin, c.Request.Host) {
+			c.Header("Access-Control-Allow-Origin", origin)
+			c.Header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
+			c.Header("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			c.Header("Access-Control-Allow-Credentials", "true")
+			c.Header("Vary", "Origin")
+		}
 		if c.Request.Method == http.MethodOptions {
 			c.AbortWithStatus(http.StatusNoContent)
 			return
