@@ -112,7 +112,8 @@ export default {
     targetHint: ':8080 or :8080/api/v1 or full URL, supports ${ENV}',
     interval: 'Check Interval',
     intervalHint: 'Per-site probe interval (5-86400s, default 30)',
-    tlsSkipHint: 'Enable for self-signed backends (Baota panel / WSL intranet) to avoid 502. Affects only gateway-to-backend TLS, not browser-to-gateway.'
+    tlsSkipHint: 'Enable for self-signed backends (Baota panel / WSL intranet) to avoid 502. Affects only gateway-to-backend TLS, not browser-to-gateway.',
+    sdkOriginHint: 'Route OAuth callbacks (WeChat/Apple) back to the origin domain so provider domain whitelists pass; login completes on the original site.',
   },
   stats: {
     totalPV: 'Total PV',

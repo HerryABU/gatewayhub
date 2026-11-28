@@ -27,7 +27,11 @@ type Route struct {
 	DropForeign bool   `gorm:"default:false" json:"drop_foreign_cookies"`
 	// TLSSkipVerify 跳过后端 HTTPS 证书校验。默认关闭；宝塔面板 / 内网自签服务
 	// 需显式打开。仅影响网关→后端这一段，不改变浏览器→网关的证书校验。
-	TLSSkipVerify bool      `gorm:"default:false" json:"tls_insecure_skip_verify"`
+	TLSSkipVerify bool `gorm:"default:false" json:"tls_insecure_skip_verify"`
+	// SDKOriginAuth 第三方登录 SDK（微信/Apple 等）的回调走原站域名：
+	// shim 把 redirect_uri 从网关 origin 换成后端原站 origin，让开放平台的
+	// 域名白名单校验通过（网关域名通常不在登记名单里）。登录流程在原站完成。
+	SDKOriginAuth bool      `gorm:"default:false" json:"sdk_origin_auth"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

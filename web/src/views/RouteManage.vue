@@ -76,6 +76,10 @@
           <el-switch v-model="form.tls_insecure_skip_verify" />
           <div class="gh-dim">{{ t('route.tlsSkipHint') }}</div>
         </el-form-item>
+        <el-form-item label="SDK 登录回原站">
+          <el-switch v-model="form.sdk_origin_auth" />
+          <div class="gh-dim">{{ t('route.sdkOriginHint') }}</div>
+        </el-form-item>
         <el-form-item :label="t('route.timeout')">
           <el-input-number v-model="form.timeout" :min="1" :max="60" /> <span class="gh-dim">s</span>
         </el-form-item>
@@ -111,7 +115,7 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
 const formRef = ref()
-const form = reactive({ name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, timeout: 5, interval: 30, status: 'active' })
+const form = reactive({ name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, sdk_origin_auth: false, timeout: 5, interval: 30, status: 'active' })
 
 const rules = {
   name: [{ required: true, message: 'Name', trigger: 'blur' }],
@@ -131,12 +135,12 @@ async function load() {
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, timeout: 5, interval: 30, status: 'active' })
+  Object.assign(form, { name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, sdk_origin_auth: false, timeout: 5, interval: 30, status: 'active' })
   dialogVisible.value = true
 }
 function openEdit(row) {
   isEdit.value = true
-  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, description: row.description || '', cookie_hat: row.cookie_hat || '', drop_foreign_cookies: !!row.drop_foreign_cookies, tls_insecure_skip_verify: !!row.tls_insecure_skip_verify, timeout: row.timeout, interval: row.interval || 30, status: row.status })
+  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, description: row.description || '', cookie_hat: row.cookie_hat || '', drop_foreign_cookies: !!row.drop_foreign_cookies, tls_insecure_skip_verify: !!row.tls_insecure_skip_verify, sdk_origin_auth: !!row.sdk_origin_auth, timeout: row.timeout, interval: row.interval || 30, status: row.status })
   dialogVisible.value = true
 }
 

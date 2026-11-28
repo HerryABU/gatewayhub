@@ -36,6 +36,7 @@ import (
 // 已钩住的 Element.setAttribute 与 HTMLScriptElement/Link/Image 的属性 setter。
 const prefixShimTemplate = `(function(){
   var P=__P__;
+  var O_AUTH=__O__;
   if(!P||P==="/")return;
   var PS=P+"/";
   window.__GATEWAY_PREFIX__=P;
@@ -54,6 +55,12 @@ const prefixShimTemplate = `(function(){
       var r;
       try{r=new URL(ru,location.href)}catch(e){return u}
       if(r.origin!==location.origin)return u;
+      // 回源模式：把回调换成原站 origin，让微信/Apple 开放平台的
+      // 域名白名单校验通过（登录流程在原站完成），路径保持后端原始路径。
+      if(O_AUTH){
+        uu.searchParams.set("redirect_uri",O_AUTH+r.pathname+(r.search||"")+(r.hash||""));
+        return uu.toString();
+      }
       var fixed=fix(r.pathname+(r.search||"")+(r.hash||""));
       if(fixed===r.pathname+(r.search||"")+(r.hash||""))return u;
       uu.searchParams.set("redirect_uri",location.origin+fixed);
@@ -169,6 +176,14 @@ func (rw *Rewriter) prefixShim() string {
 		return ""
 	}
 	js := strings.Replace(prefixShimTemplate, "__P__", string(enc), 1)
+	// __O__ 是「SDK 回调回源」的原站 origin；未开启时注入空串（JS 里 falsy，走补前缀逻辑）。
+	originJSON := []byte("null")
+	if rw.origin != "" {
+		if encO, err := json.Marshal(rw.origin); err == nil {
+			originJSON = encO
+		}
+	}
+	js = strings.Replace(js, "__O__", string(originJSON), 1)
 	return "<script data-gateway-prefix-shim=\"1\">" + js + "</script>"
 }
 

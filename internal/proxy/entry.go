@@ -73,7 +73,12 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 	entry.Self = target.IsSelf(p, m.self.Port, m.baseDomain)
 
 	// 路径模式：剥离 /prefix 前缀 + 响应内容重写（加回前缀、注入 <base>）
+	// 开启 SDKOriginAuth 时把原站 origin 交给 shim：第三方 OAuth 回调（redirect_uri）
+	// 换成原站域名，让微信/Apple 开放平台的白名单通过；登录在原站完成。
 	rw := rewrite.New(r.Prefix, p.Root, p.Host)
+	if r.SDKOriginAuth && p.Scheme != "" && p.Host != "" {
+		rw = rewrite.NewWithOrigin(r.Prefix, p.Root, p.Host, p.Scheme+"://"+p.Host)
+	}
 	entry.Proxy = &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			// 记录网关侧原始路径（外链 CSS 相对化需要推算基准目录）

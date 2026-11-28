@@ -41,11 +41,19 @@ type Rewriter struct {
 	prefix string // 网关对外前缀，如 "java-order"
 	root   string // 后端根路径，如 "" 或 "/api/v1"
 	host   string // 后端 host，用于重写指向后端的绝对重定向
+	origin string // SDK 回调回源的原站 origin（如 https://chat.deepseek.com）；空=补网关前缀
 }
 
 // New 创建改写器：prefix 为网关对外前缀（如 java-order），root 为后端根路径，host 为后端 host。
 func New(prefix, root, host string) *Rewriter {
 	return &Rewriter{prefix: prefix, root: root, host: host}
+}
+
+// NewWithOrigin 额外指定「SDK 回调回源」的原站 origin。
+// 仅当路由开启 sdk_origin_auth 时使用：第三方 OAuth 的 redirect_uri 会换成该 origin，
+// 让开放平台域名白名单通过（登录在原站完成）。origin 必须是 scheme://host 形式。
+func NewWithOrigin(prefix, root, host, origin string) *Rewriter {
+	return &Rewriter{prefix: prefix, root: root, host: host, origin: origin}
 }
 
 func (rw *Rewriter) gatewayPath() string {
@@ -74,7 +82,8 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		audit.Status = resp.StatusCode
 		defer func() { audit.Status = resp.StatusCode }()
 	}
-	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host}
+	// 注意：必须带上 origin（SDK 回源配置），否则嵌套链/链首重建会把回源开关丢掉。
+	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin}
 
 	// 重定向 Location（无需读 body）
 	if loc := resp.Header.Get("Location"); loc != "" {

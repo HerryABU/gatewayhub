@@ -570,3 +570,40 @@ func TestShimOAuthCallbackFix(t *testing.T) {
 		}
 	}
 }
+
+// TestShimSDKOriginAuth 回源模式：注入原站 origin，fixOAuth 用 O_AUTH 替换回调域名，
+// 让微信/Apple 开放平台白名单通过。默认（New）必须注入 null，不回源。
+func TestShimSDKOriginAuth(t *testing.T) {
+	plain := New("dps", "", "chat.deepseek.com").prefixShim()
+	if !strings.Contains(plain, "var O_AUTH=null") {
+		t.Errorf("默认模式应注入 null（不回源）: %s", plain[:min(200, len(plain))])
+	}
+	withOrigin := NewWithOrigin("dps", "", "chat.deepseek.com", "https://chat.deepseek.com").prefixShim()
+	if !strings.Contains(withOrigin, `var O_AUTH=\"https://chat.deepseek.com\"`) &&
+		!strings.Contains(withOrigin, `var O_AUTH="https://chat.deepseek.com"`) {
+		t.Errorf("回源模式应注入原站 origin: %s", withOrigin[:min(220, len(withOrigin))])
+	}
+	if !strings.Contains(withOrigin, "O_AUTH+r.pathname") {
+		t.Error("fixOAuth 应使用 O_AUTH 替换回调 origin")
+	}
+}
+
+// TestModifyKeepsSDKOrigin 嵌套链改写会重建 Rewriter（prefix 换完整链），
+// 必须把 origin（SDK 回源配置）带上，否则回源开关在 Modify 后被悄悄丢掉。
+func TestModifyKeepsSDKOrigin(t *testing.T) {
+	rw := NewWithOrigin("a", "", "backend:80", "https://origin.example.com")
+	html := `<html><head><title>x</title></head><body>hi</body></html>`
+	resp := &http.Response{
+		StatusCode: 200,
+		Header:     http.Header{"Content-Type": []string{"text/html"}},
+		Body:       io.NopCloser(strings.NewReader(html)),
+		Request:    &http.Request{Header: http.Header{}},
+	}
+	if err := rw.Modify(resp); err != nil {
+		t.Fatalf("Modify failed: %v", err)
+	}
+	out, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(out), `var O_AUTH="https://origin.example.com"`) {
+		t.Errorf("Modify 重建 Rewriter 后丢失 origin（回源开关失效）:\n%s", string(out)[:min(400, len(out))])
+	}
+}
