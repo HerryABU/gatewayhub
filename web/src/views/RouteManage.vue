@@ -96,6 +96,10 @@
           <el-input v-model="form.response_strip" placeholder='可选，如 {"headers":["X-WAF-UUID"],"cookies":["x-waf-"]}' />
           <div class="gh-dim">{{ t('route.responseStripHint') }}</div>
         </el-form-item>
+        <el-form-item label="iframe 透传（外站）">
+          <el-input v-model="form.iframe_bridge" placeholder='可选，如 {"origin":"https://fanqienovel.com"}' />
+          <div class="gh-dim">{{ t('route.iframeBridgeHint') }}</div>
+        </el-form-item>
         <el-form-item :label="t('route.timeout')">
           <el-input-number v-model="form.timeout" :min="1" :max="60" /> <span class="gh-dim">s</span>
         </el-form-item>
@@ -131,7 +135,7 @@ const dialogVisible = ref(false)
 const isEdit = ref(false)
 const saving = ref(false)
 const formRef = ref()
-const form = reactive({ name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, sdk_origin_auth: false, wx_appid: "", oauth_redirect_map: "", passthrough: false, response_strip: "", timeout: 5, interval: 30, status: 'active' })
+const form = reactive({ name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, sdk_origin_auth: false, wx_appid: "", oauth_redirect_map: "", passthrough: false, response_strip: "", iframe_bridge: "", timeout: 5, interval: 30, status: 'active' })
 
 const rules = {
   name: [{ required: true, message: 'Name', trigger: 'blur' }],
@@ -151,12 +155,12 @@ async function load() {
 
 function openCreate() {
   isEdit.value = false
-  Object.assign(form, { name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, sdk_origin_auth: false, wx_appid: "", oauth_redirect_map: "", passthrough: false, response_strip: "", timeout: 5, interval: 30, status: 'active' })
+  Object.assign(form, { name: '', prefix: '', target: '', description: '', cookie_hat: '', drop_foreign_cookies: false, tls_insecure_skip_verify: false, sdk_origin_auth: false, wx_appid: "", oauth_redirect_map: "", passthrough: false, response_strip: "", iframe_bridge: "", timeout: 5, interval: 30, status: 'active' })
   dialogVisible.value = true
 }
 function openEdit(row) {
   isEdit.value = true
-  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, description: row.description || '', cookie_hat: row.cookie_hat || '', drop_foreign_cookies: !!row.drop_foreign_cookies, tls_insecure_skip_verify: !!row.tls_insecure_skip_verify, sdk_origin_auth: !!row.sdk_origin_auth, wx_appid: row.wx_appid || "", oauth_redirect_map: row.oauth_redirect_map || "", passthrough: !!row.passthrough, response_strip: row.response_strip || "", timeout: row.timeout, interval: row.interval || 30, status: row.status })
+  Object.assign(form, { name: row.name, prefix: row.prefix, target: row.target, description: row.description || '', cookie_hat: row.cookie_hat || '', drop_foreign_cookies: !!row.drop_foreign_cookies, tls_insecure_skip_verify: !!row.tls_insecure_skip_verify, sdk_origin_auth: !!row.sdk_origin_auth, wx_appid: row.wx_appid || "", oauth_redirect_map: row.oauth_redirect_map || "", passthrough: !!row.passthrough, response_strip: row.response_strip || "", iframe_bridge: row.iframe_bridge || "", timeout: row.timeout, interval: row.interval || 30, status: row.status })
   dialogVisible.value = true
 }
 

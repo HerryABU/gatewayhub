@@ -55,6 +55,8 @@ type Rewriter struct {
 	// cspNonce 从上游 Content-Security-Policy 提取的 nonce，注入 shim 时复用，
 	// 否则严格 CSP（strict-dynamic）会拒绝执行我们注入的脚本。
 	cspNonce string
+	// iframeBridge 官方域名 iframe 透传配置（JSON）。
+	iframeBridge string
 }
 
 // New 创建改写器：prefix 为网关对外前缀（如 java-order），root 为后端根路径，host 为后端 host。
@@ -85,6 +87,9 @@ func (rw *Rewriter) SetStripRules(headers, cookies []string) {
 // SetPassthrough 开启完全透传（零改写、零注入）。
 func (rw *Rewriter) SetPassthrough(v bool) { rw.passthrough = v }
 
+// SetIframeBridge 设置 iframe 透传配置。
+func (rw *Rewriter) SetIframeBridge(m string) { rw.iframeBridge = m }
+
 func (rw *Rewriter) gatewayPath() string {
 	return "/" + rw.prefix
 }
@@ -112,7 +117,7 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		defer func() { audit.Status = resp.StatusCode }()
 	}
 	// 注意：必须带上 origin（SDK 回源）与 spoofHost（分层欺骗），否则嵌套链/链首重建会丢开关。
-	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin, wxAppid: rw.wxAppid, oauthRedirectMap: rw.oauthRedirectMap, passthrough: rw.passthrough, stripHeaders: rw.stripHeaders, stripCookies: rw.stripCookies, cspNonce: extractCSPNonce(resp.Header)}
+	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin, wxAppid: rw.wxAppid, oauthRedirectMap: rw.oauthRedirectMap, passthrough: rw.passthrough, stripHeaders: rw.stripHeaders, stripCookies: rw.stripCookies, cspNonce: extractCSPNonce(resp.Header), iframeBridge: rw.iframeBridge}
 
 	// passthrough：路由级完全透传——删除所有改写/注入动作，字节原样回浏览器。
 	// 用于反爬严格、或自身已处理子路径的站点；此时 Still 执行 strip 规则（见函数末尾）。

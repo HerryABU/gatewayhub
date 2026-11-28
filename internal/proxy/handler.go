@@ -50,6 +50,18 @@ func (m *Manager) Handle(c *gin.Context) {
 		}
 	}
 
+	// 1.5) 官方域名入口：Host 精确匹配 target host → 零重写纯透传（同子域名模式）。
+	// iframe 透传时 iframe 用官方域名访问网关，路径即后端根路径，不做前缀改写。
+	if _, entry, ok := m.matchTargetHost(c.Request.Host); ok {
+		if entry.Route.Status != models.StatusActive {
+			m.logRejected(c, "", kindSubdomain, http.StatusServiceUnavailable)
+			c.JSON(http.StatusServiceUnavailable, gin.H{"code": http.StatusServiceUnavailable, "message": "route disabled"})
+			return
+		}
+		m.serve(c, entry, entry.SubProxy, "", path, clientIP, kindSubdomain)
+		return
+	}
+
 	// 2) 路径路由：最长前缀匹配
 	prefix, entry, ok := m.matchPath(path)
 	if !ok {

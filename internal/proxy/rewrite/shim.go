@@ -39,7 +39,25 @@ const prefixShimTemplate = `(function(){
   var O_AUTH=__O__;
   var WX_APPID=__A__;
   var REDIRECT_MAP=__M__;
+  var IFRAME_BRIDGE=__IB__;
   if(!P||P==="/")return;
+  // 外站 iframe 透传：顶层页面且 hostname 不是官方域名时，用官方域名 iframe
+  // 承载真实页面——iframe 内 location.hostname 正确，所有按域名判环境的 SDK
+  // （微信/QQ/飞书/字节 SSR）天然走生产配置。需把官方域名 DNS/Hosts 指向网关。
+  // 若 iframe 被 X-Frame-Options/CSP 拒绝（onload 不触发且被拦截），超时回退原页。
+  if(IFRAME_BRIDGE&&IFRAME_BRIDGE.origin&&window===window.top&&location.hostname!==IFRAME_BRIDGE.host){
+    try{
+      var ib=IFRAME_BRIDGE, src=ib.origin+location.pathname+location.search;
+      var f=document.createElement("iframe");
+      f.src=src; f.style.cssText="position:fixed;inset:0;width:100vw;height:100vh;border:0;z-index:2147483647;background:#fff";
+      f.setAttribute("data-gateway-iframe-bridge","1");
+      var done=false;
+      f.onload=function(){done=true;try{document.body.style.overflow="hidden"}catch(e){}};
+      (document.body||document.documentElement).appendChild(f);
+      // 8 秒内没 load（多半被 X-Frame-Options 拒）→ 移除 iframe，回退原页面
+      setTimeout(function(){if(!done&&f.parentNode)f.parentNode.removeChild(f)},ib.timeout||8000);
+    }catch(e){}
+  }
   // 通用 OAuth 回调域名修正：把 redirect_uri 里匹配 REDIRECT_MAP 的域名换成新域名。
   // 典型：staging(chat-dev.deepseek.com) → 生产(chat.deepseek.com)。对微信/QQ/飞书
   // 等所有第三方 OAuth 一视同仁，只动 redirect_uri 的 origin，不碰路径/state/code。
@@ -250,6 +268,12 @@ func (rw *Rewriter) prefixShim() string {
 		mapJSON = rw.oauthRedirectMap // entry.go 已校验为合法 JSON
 	}
 	js = strings.Replace(js, "__M__", mapJSON, 1)
+	// __IB__ 是 iframe 透传配置（JSON: {origin,host,timeout}）；空则 null。
+	ibJSON := "null"
+	if rw.iframeBridge != "" {
+		ibJSON = rw.iframeBridge // entry.go 已校验为合法 JSON
+	}
+	js = strings.Replace(js, "__IB__", ibJSON, 1)
 	return "<script data-gateway-prefix-shim=\"1\">" + js + "</script>"
 }
 

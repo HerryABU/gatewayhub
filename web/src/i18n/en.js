@@ -126,6 +126,7 @@ export default {
     oauthMapHint: 'Replace old host with new host in OAuth redirect_uri (JSON object), e.g. staging to production; applies to all SDKs',
     passthroughHint: 'Full passthrough: disable shim injection, path rewriting and cookie tightening; raw bytes (for strict anti-bot sites)',
     responseStripHint: 'Strip response: JSON object, headers = header names to remove, cookies = cookie name prefixes to remove',
+    iframeBridgeHint: 'External-site iframe passthrough: host the page in an iframe on the official domain so hostname checks pass; point official domain DNS/Hosts to the gateway; auto-fallback if X-Frame blocks',
   },
   stats: {
     totalPV: 'Total PV',

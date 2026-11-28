@@ -45,6 +45,9 @@ type Route struct {
 	Passthrough bool `gorm:"default:false" json:"passthrough"`
 	// ResponseStrip JSON: {"headers":["X-WAF-UUID"],"cookies":["x-waf-"]}。
 	ResponseStrip string    `gorm:"size:1000;default:''" json:"response_strip"`
+	// IframeBridge JSON: {"origin":"https://fanqienovel.com","mode":"auto"}。
+	// 外站透传：用官方域名 iframe 承载页面，hostname 判定天然正确。
+	IframeBridge string    `gorm:"size:1000;default:''" json:"iframe_bridge"`
 	CreatedAt     time.Time `json:"created_at"`
 	UpdatedAt     time.Time `json:"updated_at"`
 }

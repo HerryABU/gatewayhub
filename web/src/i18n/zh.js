@@ -126,6 +126,7 @@ export default {
     oauthMapHint: '把第三方登录回调 URL 里的旧域名换成新域名（JSON 对象），如 staging 域名改生产域名；对所有 SDK 生效',
     passthroughHint: '完全透传：关闭 shim 注入、路径前缀改写与 cookie 收紧，响应字节原样（适合反爬严格站点）',
     responseStripHint: '删除响应内容：JSON 对象，headers 为要删的响应头名，cookies 为要删的 cookie 名前缀',
+    iframeBridgeHint: '外站 iframe 透传：用官方域名 iframe 承载页面，hostname 判定天然正确；需把官方域名 DNS/Hosts 指向网关，被 X-Frame 拒绝时自动回退',
   },
   stats: {
     totalPV: '总 PV',

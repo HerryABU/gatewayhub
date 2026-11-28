@@ -6,6 +6,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httputil"
+	"net/url"
 	"sync"
 	"time"
 
@@ -90,6 +91,28 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 	// 完全透传：关闭所有改写/注入。
 	if r.Passthrough {
 		rw.SetPassthrough(true)
+	}
+	// iframe 透传：用官方域名 iframe 承载，hostname 判定天然正确。
+	if r.IframeBridge != "" && json.Valid([]byte(r.IframeBridge)) {
+		var ib struct {
+			Origin  string `json:"origin"`
+			Host    string `json:"host"`
+			Timeout int    `json:"timeout"`
+			Mode    string `json:"mode"`
+		}
+		if json.Unmarshal([]byte(r.IframeBridge), &ib) == nil && ib.Origin != "" {
+			if ib.Host == "" {
+				if u, err := url.Parse(ib.Origin); err == nil {
+					ib.Host = u.Hostname()
+				}
+			}
+			if ib.Timeout <= 0 {
+				ib.Timeout = 8000
+			}
+			if canonical, err := json.Marshal(ib); err == nil {
+				rw.SetIframeBridge(string(canonical))
+			}
+		}
 	}
 	// 通用删除规则：解析 {"headers":[...],"cookies":[...]}。
 	if r.ResponseStrip != "" {

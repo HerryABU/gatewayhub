@@ -119,6 +119,13 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 		if h.Iso != nil && h.Iso.Active() && !h.Iso.Matches(path) {
 			h.Iso.AttributeUnmatched(path)
 		}
+		// 官方域名入口：Host 精确匹配某条 active 路由的 target host（iframe 透传基础）。
+		// 用户把官方域名 DNS/Hosts 指向网关后，浏览器访问的就是真正的官方 hostname，
+		// 所有按 hostname 判环境的 SDK 天然走生产配置，无需逐站 hook。
+		if _, _, ok := h.Proxy.MatchTargetHost(c.Request.Host); ok {
+			h.Proxy.Handle(c)
+			return
+		}
 		// 子域名路由优先：Host 已经声明归属某个后端，路径就是后端根路径。
 		// 此时网关自己的 /api 守卫、静态资源与 SPA 回退都必须让位（否则后端
 		// 的 /api/*、/assets/* 会被网关吞掉）。

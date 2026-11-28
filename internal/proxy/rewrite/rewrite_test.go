@@ -652,3 +652,26 @@ func TestShimOAuthRedirectMap(t *testing.T) {
 		}
 	}
 }
+
+// TestShimIframeBridge iframe 透传：顶层页面 hostname 非官方域名时创建
+// src=官方域名的全屏 iframe；被 X-Frame-Options 拒时超时回退。未配置注入 null。
+func TestShimIframeBridge(t *testing.T) {
+	plain := New("fanq", "", "fanqienovel.com").prefixShim()
+	if !strings.Contains(plain, "var IFRAME_BRIDGE=null") {
+		t.Error("未配置时应注入 null")
+	}
+	rw := New("fanq", "", "fanqienovel.com")
+	rw.SetIframeBridge(`{"origin":"https://fanqienovel.com","host":"fanqienovel.com","timeout":8000,"mode":"auto"}`)
+	shim := rw.prefixShim()
+	for _, s := range []string{
+		`"origin":"https://fanqienovel.com"`,
+		"window===window.top",                                // 只在顶层创建，避免 iframe 内再嵌
+		"location.hostname!==IFRAME_BRIDGE.host",             // hostname 已是官方域名时不重复嵌
+		"data-gateway-iframe-bridge",                         // 标记，便于取证
+		"if(!done&&f.parentNode)f.parentNode.removeChild(f)", // 被拒时回退
+	} {
+		if !strings.Contains(shim, s) {
+			t.Errorf("shim 缺少 iframe 桥接片段 %q", s)
+		}
+	}
+}

@@ -36,6 +36,7 @@ type routeReq struct {
 	OAuthRedirectMap string `json:"oauth_redirect_map"`
 	Passthrough      bool   `json:"passthrough"`
 	ResponseStrip    string `json:"response_strip"`
+		IframeBridge     string `json:"iframe_bridge"`
 }
 
 // validatePrefix 校验转发名（支持多级前缀，如 "v2/beta"，每段以小写字母开头）
@@ -131,6 +132,7 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		OAuthRedirectMap string `json:"oauth_redirect_map"`
 		Passthrough      bool   `json:"passthrough"`
 		ResponseStrip    string `json:"response_strip"`
+		IframeBridge     string `json:"iframe_bridge"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -198,6 +200,7 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		OAuthRedirectMap: strings.TrimSpace(req.OAuthRedirectMap),
 		Passthrough:      req.Passthrough,
 		ResponseStrip:    strings.TrimSpace(req.ResponseStrip),
+		IframeBridge:     strings.TrimSpace(req.IframeBridge),
 	}
 	if err := h.DB.Create(&route).Error; err != nil {
 		h.fail(c, 2001, "创建失败")
@@ -272,6 +275,7 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 	route.OAuthRedirectMap = strings.TrimSpace(req.OAuthRedirectMap)
 	route.Passthrough = req.Passthrough
 	route.ResponseStrip = strings.TrimSpace(req.ResponseStrip)
+	route.IframeBridge = strings.TrimSpace(req.IframeBridge)
 	if err := h.DB.Save(&route).Error; err != nil {
 		h.fail(c, 2001, "更新失败")
 		return
