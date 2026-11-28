@@ -34,6 +34,8 @@ type routeReq struct {
 	SDKOriginAuth    bool   `json:"sdk_origin_auth"`
 	WXAppid          string `json:"wx_appid"`
 	OAuthRedirectMap string `json:"oauth_redirect_map"`
+	Passthrough      bool   `json:"passthrough"`
+	ResponseStrip    string `json:"response_strip"`
 }
 
 // validatePrefix 校验转发名（支持多级前缀，如 "v2/beta"，每段以小写字母开头）
@@ -127,6 +129,8 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		SDKOriginAuth    bool   `json:"sdk_origin_auth"`
 		WXAppid          string `json:"wx_appid"`
 		OAuthRedirectMap string `json:"oauth_redirect_map"`
+		Passthrough      bool   `json:"passthrough"`
+		ResponseStrip    string `json:"response_strip"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -192,6 +196,8 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		SDKOriginAuth:    req.SDKOriginAuth,
 		WXAppid:          strings.TrimSpace(req.WXAppid),
 		OAuthRedirectMap: strings.TrimSpace(req.OAuthRedirectMap),
+		Passthrough:      req.Passthrough,
+		ResponseStrip:    strings.TrimSpace(req.ResponseStrip),
 	}
 	if err := h.DB.Create(&route).Error; err != nil {
 		h.fail(c, 2001, "创建失败")
@@ -264,6 +270,8 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 	route.SDKOriginAuth = req.SDKOriginAuth
 	route.WXAppid = strings.TrimSpace(req.WXAppid)
 	route.OAuthRedirectMap = strings.TrimSpace(req.OAuthRedirectMap)
+	route.Passthrough = req.Passthrough
+	route.ResponseStrip = strings.TrimSpace(req.ResponseStrip)
 	if err := h.DB.Save(&route).Error; err != nil {
 		h.fail(c, 2001, "更新失败")
 		return

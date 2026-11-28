@@ -14,6 +14,7 @@ import (
 	"gatewayhub/internal/auth"
 	"gatewayhub/internal/handlers"
 	isohandlers "gatewayhub/internal/handlers/isolation"
+	"gatewayhub/internal/proxy"
 )
 
 // Setup 构建 http.Handler：外层先做「子路径部署前缀」剥离（在 Gin 路由匹配之前），
@@ -125,6 +126,18 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 			h.Proxy.Handle(c)
 			return
 		}
+		// 应用内 SDK（字节 ttwid / 各类 OAuth SDK）常在 JS 里硬编码根相对路径
+		// （/ttwid/check/、/api/user/info），且用原生 fetch 绕过 shim hook →
+		// 打到网关根 404。智能回退：若 Referer 同源且指向某个已启用路由前缀，
+		// 就把请求补上该前缀再转发。只认同源 Referer，避免跨站借道。
+		if !h.Proxy.Matchable(path, c.Request.Host) {
+			if prefix := prefixFromReferer(c, h.Proxy); prefix != "" {
+				c.Request.URL.Path = "/" + prefix + path
+				c.Request.URL.RawPath = ""
+				h.Proxy.Handle(c)
+				return
+			}
+		}
 		if strings.HasPrefix(path, "/api/") {
 			c.JSON(http.StatusNotFound, gin.H{"code": http.StatusNotFound, "message": "not found"})
 			return
@@ -158,6 +171,30 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 }
 
 // serveSPA 提供静态资源或 SPA 回退；多段未知路径返回 404
+// prefixFromReferer 从同源 Referer 中找出已启用路由前缀，用于给 SDK 内部
+// 根相对请求（/ttwid/check/、/api/user/info 等）补前缀的服务端兜底。
+// 只认同源 Referer + 已启用路由，避免跨站借道访问后端。
+func prefixFromReferer(c *gin.Context, mgr *proxy.Manager) string {
+	ref := c.GetHeader("Referer")
+	if ref == "" {
+		return ""
+	}
+	u, err := url.Parse(ref)
+	if err != nil || !strings.EqualFold(u.Host, c.Request.Host) {
+		return ""
+	}
+	seg := strings.Trim(u.Path, "/")
+	if seg == "" {
+		return ""
+	}
+	prefix := strings.Split(seg, "/")[0]
+	e, ok := mgr.Get(prefix)
+	if ok && e.Route.Status == "active" {
+		return prefix
+	}
+	return ""
+}
+
 func serveSPA(c *gin.Context, dist fs.FS, fileServer http.Handler) {
 	path := c.Request.URL.Path
 	if p := strings.TrimPrefix(path, "/"); p != "" {

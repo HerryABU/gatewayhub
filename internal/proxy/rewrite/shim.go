@@ -264,6 +264,9 @@ func (rw *Rewriter) injectShim(s string) string {
 	if shim == "" {
 		return s
 	}
+	// 严格 CSP（script-src 'nonce-xxx' 'strict-dynamic'）会拒绝没有 nonce 的内联脚本；
+	// 复用上游 CSP 里的 nonce，否则 shim 被拦 → 所有请求 hook 失效 → 资源 404。
+	shim = shimWithNonce(shim, rw.cspNonce)
 	if shimBlockRe.MatchString(s) {
 		// 前缀没变就原样返回：PrepareHTML 的幂等判定依赖「不额外制造命中」。
 		if shimBlockRe.FindString(s) == shim {

@@ -124,6 +124,8 @@ export default {
     sdkOriginHint: '第三方登录（微信/Apple）的回调改走原站域名，让开放平台域名白名单通过；登录流程在原站完成。',
     wxAppidHint: '微信登录初始化时替换为此 AppID（从原站获取）；留空则不替换。',
     oauthMapHint: '把第三方登录回调 URL 里的旧域名换成新域名（JSON 对象），如 staging 域名改生产域名；对所有 SDK 生效',
+    passthroughHint: '完全透传：关闭 shim 注入、路径前缀改写与 cookie 收紧，响应字节原样（适合反爬严格站点）',
+    responseStripHint: '删除响应内容：JSON 对象，headers 为要删的响应头名，cookies 为要删的 cookie 名前缀',
   },
   stats: {
     totalPV: '总 PV',

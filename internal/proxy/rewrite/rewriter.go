@@ -46,6 +46,15 @@ type Rewriter struct {
 	wxAppid string
 	// oauthRedirectMap 通用 OAuth 回调域名替换（JSON: {旧域名:新域名}）。
 	oauthRedirectMap string
+	// passthrough 为 true 时完全零改写：不注入 shim、不改前缀、不删 cookie——
+	// 响应字节（除 WAF 挑战的路径补全外）原样透传，用于反爬严格站点。
+	passthrough bool
+	// stripHeaders 要删除的响应头名（大小写不敏感）；stripCookies 要删除的 cookie 名前缀。
+	stripHeaders []string
+	stripCookies []string
+	// cspNonce 从上游 Content-Security-Policy 提取的 nonce，注入 shim 时复用，
+	// 否则严格 CSP（strict-dynamic）会拒绝执行我们注入的脚本。
+	cspNonce string
 }
 
 // New 创建改写器：prefix 为网关对外前缀（如 java-order），root 为后端根路径，host 为后端 host。
@@ -67,6 +76,14 @@ func (rw *Rewriter) SetWXAppid(appid string) { rw.wxAppid = appid }
 
 // SetOAuthRedirectMap 设置通用 OAuth 回调域名映射。
 func (rw *Rewriter) SetOAuthRedirectMap(m string) { rw.oauthRedirectMap = m }
+
+// SetStripRules 设置响应头/cookie 删除规则。
+func (rw *Rewriter) SetStripRules(headers, cookies []string) {
+	rw.stripHeaders, rw.stripCookies = headers, cookies
+}
+
+// SetPassthrough 开启完全透传（零改写、零注入）。
+func (rw *Rewriter) SetPassthrough(v bool) { rw.passthrough = v }
 
 func (rw *Rewriter) gatewayPath() string {
 	return "/" + rw.prefix
@@ -95,7 +112,14 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		defer func() { audit.Status = resp.StatusCode }()
 	}
 	// 注意：必须带上 origin（SDK 回源）与 spoofHost（分层欺骗），否则嵌套链/链首重建会丢开关。
-	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin, wxAppid: rw.wxAppid, oauthRedirectMap: rw.oauthRedirectMap}
+	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin, wxAppid: rw.wxAppid, oauthRedirectMap: rw.oauthRedirectMap, passthrough: rw.passthrough, stripHeaders: rw.stripHeaders, stripCookies: rw.stripCookies, cspNonce: extractCSPNonce(resp.Header)}
+
+	// passthrough：路由级完全透传——删除所有改写/注入动作，字节原样回浏览器。
+	// 用于反爬严格、或自身已处理子路径的站点；此时 Still 执行 strip 规则（见函数末尾）。
+	if rw.passthrough {
+		rw.applyStripRules(resp) // 只删响应头/cookie，不碰 body
+		return nil
+	}
 
 	// WAF 反爬挑战页：只补资源路径前缀，绝不注入 shim/改探针内容。
 	// 起点对可疑客户端返回 202 + X-WAF-UUID + 极短 HTML，里面有
@@ -212,6 +236,8 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 	// 体已改写：换成本网关自算的 ETag（no-cache 再验证），否则客户端可能长期复用旧副本。
 	// 指纹必须带本跳前缀：嵌套链里每一跳都会改写同一份内容，ETag 若只取内容 hash，
 	// 浏览器拿外层 ETag 去内层校验就会误命中 304，拿到外层已过时的一份字节。
+	// 通用删除规则：删指定响应头/cookie（不碰 body）。
+	rw.applyStripRules(resp)
 	if MarkRewrittenScope(resp.Request, resp, decoded, rw.prefix) {
 		return nil
 	}

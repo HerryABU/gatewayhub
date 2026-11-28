@@ -124,6 +124,8 @@ export default {
     sdkOriginHint: 'Route OAuth callbacks (WeChat/Apple) back to the origin domain so provider domain whitelists pass; login completes on the original site.',
     wxAppidHint: 'Replace WeChat appid with this value at SDK init (get it from origin site); empty = no replacement.',
     oauthMapHint: 'Replace old host with new host in OAuth redirect_uri (JSON object), e.g. staging to production; applies to all SDKs',
+    passthroughHint: 'Full passthrough: disable shim injection, path rewriting and cookie tightening; raw bytes (for strict anti-bot sites)',
+    responseStripHint: 'Strip response: JSON object, headers = header names to remove, cookies = cookie name prefixes to remove',
   },
   stats: {
     totalPV: 'Total PV',

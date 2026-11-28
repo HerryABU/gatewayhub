@@ -87,6 +87,20 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 	if r.OAuthRedirectMap != "" && json.Valid([]byte(r.OAuthRedirectMap)) {
 		rw.SetOAuthRedirectMap(r.OAuthRedirectMap)
 	}
+	// 完全透传：关闭所有改写/注入。
+	if r.Passthrough {
+		rw.SetPassthrough(true)
+	}
+	// 通用删除规则：解析 {"headers":[...],"cookies":[...]}。
+	if r.ResponseStrip != "" {
+		var strip struct {
+			Headers []string `json:"headers"`
+			Cookies []string `json:"cookies"`
+		}
+		if json.Unmarshal([]byte(r.ResponseStrip), &strip) == nil {
+			rw.SetStripRules(strip.Headers, strip.Cookies)
+		}
+	}
 	entry.Proxy = &httputil.ReverseProxy{
 		Director: func(req *http.Request) {
 			// 记录网关侧原始路径（外链 CSS 相对化需要推算基准目录）

@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.18**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.19**
 
 ---
 
@@ -41,6 +41,9 @@
 - 默认内置一条 **GatewayHub 项目主页**友链，可在控制台「🔗 友链管理」里增删改；只接受 `http(s)://` 绝对地址（`javascript:` / `data:` 会被拒绝与过滤）
 - 访客态看不到后端地址列（仅管理员可见）；「全部服务」表格（含已停用路由）仅管理员可见
 - **WAF 探针 JS 百分百透传**：国内站点（起点实测）对可疑客户端返回 `202 + X-WAF-UUID + probe.js` 反爬挑战页。网关智能识别后**只补探针资源路径前缀、不注入 shim、不改任何脚本字节**，浏览器原样执行探针即可通过挑战，页面正常渲染。实测 `/qidian/`：202 挑战 → probe.js 200 → 挑战通过 → 首页正常显示。
+- **严格 CSP（nonce）兼容**：上游带 `script-src 'nonce-xxx' 'strict-dynamic'` 时（字节/番茄等），网关注入的 shim 会自动复用上游 CSP 的 nonce，否则内联脚本被浏览器拒绝执行 → 请求 hook 全失效。
+- **通用删除能力**（路由字段 `passthrough` / `response_strip`）：`passthrough` 开启后完全零改写零注入（响应字节原样）；`response_strip` 是 JSON `{headers:[...],cookies:[...]}`，按名删响应头/按前缀删 Set-Cookie（如 `{headers:["X-WAF-UUID"],cookies:["x-waf-"]}`）。
+- **SDK 内部路径兜底**：某些 SDK（字节 ttwid 等）用原生 fetch 发根相对路径（`/ttwid/check/`），绕过 shim hook 打到网关根 404。NoRoute 增加同源 Referer 回退：Referer 指向已启用路由时，自动补该前缀再转发。
 - `GET /api/routes` 按身份返回：访客（无 JWT）只能拿到 active 路由且 `target` 置空，管理员拿到全部（含 inactive 与 target）——前端隐藏与接口收敛一致，避免访客从接口读到停用服务/后端拓扑
 
 ### 路径隔离网关（显式配置 · 可降级）

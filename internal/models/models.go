@@ -40,9 +40,13 @@ type Route struct {
 	// OAuthRedirectMap 通用回调域名修正：JSON 对象 {旧域名:新域名}。
 	// shim 在第三方 OAuth URL 的 redirect_uri 里做域名替换，一次覆盖微信/QQ/飞书等。
 	// 典型用途：把 staging/dev 回调域名（chat-dev.deepseek.com）换成生产域名。
-	OAuthRedirectMap string    `gorm:"size:1000;default:''" json:"oauth_redirect_map"`
-	CreatedAt        time.Time `json:"created_at"`
-	UpdatedAt        time.Time `json:"updated_at"`
+	OAuthRedirectMap string `gorm:"size:1000;default:''" json:"oauth_redirect_map"`
+	// Passthrough 完全透传：关闭所有改写/注入（shim、前缀、cookie 收紧），响应字节原样。
+	Passthrough bool `gorm:"default:false" json:"passthrough"`
+	// ResponseStrip JSON: {"headers":["X-WAF-UUID"],"cookies":["x-waf-"]}。
+	ResponseStrip string    `gorm:"size:1000;default:''" json:"response_strip"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // AccessLog 访问日志表
