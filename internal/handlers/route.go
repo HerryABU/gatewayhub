@@ -67,6 +67,7 @@ func (h *Handler) ListRoutes(c *gin.Context) {
 		models.Route
 		Health    string                `json:"health"`
 		LatencyMs int64                 `json:"latency_ms"`
+		CertDays  int                   `json:"cert_days"`
 		History   []health.HistoryPoint `json:"history"`
 	}
 	list := make([]item, 0, len(routes))
@@ -83,6 +84,7 @@ func (h *Handler) ListRoutes(c *gin.Context) {
 			Route:     r,
 			Health:    info.Status,
 			LatencyMs: info.LatencyMs,
+			CertDays:  info.CertDays,
 			History:   hist,
 		})
 	}

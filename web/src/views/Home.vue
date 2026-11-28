@@ -27,20 +27,11 @@
           </template>
         </el-dropdown>
 
-        <!-- 访客：后台入口收敛到右上角，只有一个图标（悬停才出现提示） -->
-        <el-tooltip v-if="!authed" :content="t('home.adminEntry')" placement="bottom">
-          <button
-            class="gh-icon-btn admin-entry"
-            data-testid="admin-entry"
-            :aria-label="t('home.adminEntry')"
-            @click="showLogin = true"
-          >
-            <el-icon><Key /></el-icon>
-          </button>
-        </el-tooltip>
+        <!-- 访客态不显示任何后台入口：管理入口走 /login 直达（见下方说明），
+             访客页保持纯展示，避免暴露管理面。 -->
 
         <!-- 已登录：右上角用户菜单 -->
-        <el-dropdown v-else @command="onCommand">
+        <el-dropdown v-if="authed" @command="onCommand">
           <span class="user-chip">
             <span class="user-avatar">{{ (authState.username || 'A').slice(0, 1).toUpperCase() }}</span>
             <span class="user-name">{{ authState.username }}</span>
@@ -105,31 +96,41 @@
             <div class="section-index">01 / SERVICES</div>
             <h2 class="section-title">{{ t('home.openServices') }} <span class="count-chip">{{ openRoutes.length }}</span></h2>
           </div>
-          <div class="section-tools">
+          <div v-if="authed" class="section-tools">
             <span class="gh-dim refresh-hint">{{ t('home.autoRefresh') }}</span>
             <button class="ghost-btn" :disabled="loading" @click="load">↻ {{ t('common.refresh') }}</button>
           </div>
         </div>
 
-        <div v-if="openRoutes.length" class="service-grid">
+        <!-- 状态汇总：参考 uptime-kuma 的「所有服务运行正常」一行 -->
+        <div v-if="openRoutes.length" class="overall-status" :class="overallState">
+          <span class="overall-icon">{{ overallState === 'ok' ? '✓' : '!' }}</span>
+          <span class="overall-text">{{ overallText }}</span>
+          <span class="overall-count">{{ healthy }} / {{ openRoutes.length }}</span>
+        </div>
+
+        <div v-if="openRoutes.length" class="monitor-list">
           <a
             v-for="r in openRoutes"
             :key="r.prefix"
-            class="service-card"
+            class="monitor-item"
             :href="joinBase(r.prefix) + '/'"
             target="_blank"
             rel="noopener"
           >
-            <div class="card-top">
-              <span class="status-dot" :class="healthColor(r.health)" :title="healthText(r.health)"></span>
-              <span class="card-name">{{ r.name }}</span>
-              <span class="card-arrow">↗</span>
+            <div class="mi-info">
+              <span class="mi-uptime-pct" :class="uptimeTone(r)">{{ uptimePct(r) }}</span>
+              <span class="mi-name">{{ r.name }}</span>
+              <span v-if="r.cert_days > 0" class="mi-cert" :class="certTone(r.cert_days)">
+                {{ t('home.certDays', { n: r.cert_days }) }}
+              </span>
             </div>
-            <div class="card-path">/{{ r.prefix }}</div>
-            <div class="card-desc">{{ r.description || t('home.heroDefault') }}</div>
-            <div class="card-foot">
-              <UptimeBar :history="r.history" :height="12" />
-              <span class="card-latency">{{ r.latency_ms != null ? r.latency_ms + 'ms' : healthText(r.health) }}</span>
+            <div class="mi-chart">
+              <UptimeBar :history="r.history" :height="20" />
+              <div class="mi-chart-foot">
+                <span>{{ lastCheckAgo(r) }}</span>
+                <span>{{ r.latency_ms != null ? r.latency_ms + 'ms' : healthText(r.health) }}</span>
+              </div>
             </div>
           </a>
         </div>
@@ -215,9 +216,10 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, onUnmounted } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { useI18n } from 'vue-i18n'
-import { ArrowDown, Key } from '@element-plus/icons-vue'
+import { ArrowDown } from '@element-plus/icons-vue'
 import api from '../api'
 import { authState, clearAuth } from '../store'
 import { SUPPORTED_LOCALES, setLocale } from '../i18n'
@@ -227,6 +229,8 @@ import LoginDialog from '../components/LoginDialog.vue'
 import UptimeBar from '../components/UptimeBar.vue'
 
 const { t, locale } = useI18n()
+const route = useRoute()
+const router = useRouter()
 const routes = ref([])
 const links = ref([])
 const loading = ref(false)
@@ -296,8 +300,15 @@ onMounted(() => {
   loadLinks()
   load()
   timer = setInterval(load, 10000)
+  // 管理员直达 /dashboard 未登录时，路由守卫带 ?login=1 回到这里弹登录框。
+  if (route.query.login === '1') showLogin.value = true
 })
 onUnmounted(() => clearInterval(timer))
+
+// 登录框关闭后清掉 ?login=1，避免刷新页面又弹出登录框。
+watch(showLogin, (v) => {
+  if (!v && route.query.login === '1') router.replace({ name: 'home' })
+})
 
 const year = new Date().getFullYear()
 const total = computed(() => routes.value.length)
@@ -305,6 +316,47 @@ const healthy = computed(() => routes.value.filter((r) => r.health === 'healthy'
 const down = computed(() => routes.value.filter((r) => r.health === 'down' || r.health === 'unhealthy').length)
 const unknown = computed(() => routes.value.filter((r) => r.health !== 'healthy' && r.health !== 'down' && r.health !== 'unhealthy').length)
 const openRoutes = computed(() => routes.value.filter((r) => r.status === 'active'))
+
+// ===== 访客页监控面板风格元素（参考 uptime-kuma 展示） =====
+const overallState = computed(() => {
+  if (!openRoutes.value.length) return 'ok'
+  return down.value > 0 ? 'bad' : 'ok'
+})
+const overallText = computed(() =>
+  overallState.value === 'ok' ? t('home.allHealthy') : t('home.someDown', { n: down.value })
+)
+
+// 可用性百分比：按历史点里健康占比；无历史时按当前状态给 100% / 0%。
+function uptimePct(r) {
+  const h = r.history || []
+  if (!h.length) return r.health === 'healthy' ? '100%' : '—'
+  const ok = h.filter((p) => p.status === 'healthy' || p.status === 'warning').length
+  return Math.round((ok / h.length) * 100) + '%'
+}
+function uptimeTone(r) {
+  const p = parseInt(uptimePct(r), 10)
+  if (isNaN(p)) return 'gray'
+  if (p >= 99) return 'ok'
+  if (p >= 90) return 'warn'
+  return 'bad'
+}
+// 证书有效期配色：≥30 天绿，<30 天橙，0（不适用）不显示。
+function certTone(days) {
+  return days >= 30 ? 'ok' : 'warn'
+}
+// 最近一次探测距今（参考页右端的 3h ago / 17m ago）。
+function lastCheckAgo(r) {
+  const h = r.history || []
+  if (!h.length) return t('home.unknown')
+  const last = h[h.length - 1].time
+  if (!last) return t('home.unknown')
+  const mins = Math.max(0, Math.floor((Date.now() - last) / 60000))
+  if (mins < 1) return t('home.justNow')
+  if (mins < 60) return t('home.minsAgo', { n: mins })
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return t('home.hoursAgo', { n: hrs })
+  return t('home.daysAgo', { n: Math.floor(hrs / 24) })
+}
 
 function healthColor(h) {
   if (h === 'healthy') return 'green'
@@ -448,27 +500,69 @@ function healthText(h) {
 .ghost-btn:hover { color: var(--gh-primary); border-color: var(--gh-border-strong); }
 .count-chip { display: inline-block; min-width: 22px; text-align: center; padding: 2px 8px; border-radius: 20px; background: rgba(var(--gh-primary-rgb), 0.12); border: 1px solid var(--gh-border-strong); font-size: 11px; vertical-align: 3px; }
 
-/* 服务卡片 */
-.service-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 14px; }
-.service-card {
-  display: block; padding: 18px; text-decoration: none; color: var(--gh-text);
-  border: 1px solid var(--gh-border); border-radius: 14px;
-  background: var(--gh-panel); transition: 0.25s;
+/* ===== 监控面板风格：汇总条 + 列表行（参考 uptime-kuma，配色沿用科技风变量） ===== */
+.overall-status {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 18px; margin-bottom: 16px;
+  border: 1px solid var(--gh-border); border-radius: 12px;
+  background: var(--gh-panel);
 }
-.service-card:hover { border-color: var(--gh-border-strong); box-shadow: var(--gh-glow-strong); transform: translateY(-3px); }
-.card-top { display: flex; align-items: center; gap: 9px; }
-.status-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
-.status-dot.green { background: var(--gh-green); box-shadow: 0 0 9px rgba(var(--gh-green-rgb), 0.9); }
-.status-dot.orange { background: var(--gh-orange); box-shadow: 0 0 9px rgba(var(--gh-orange-rgb), 0.9); }
-.status-dot.red { background: var(--gh-red); box-shadow: 0 0 9px rgba(var(--gh-red-rgb), 0.9); }
-.status-dot.gray { background: var(--gh-gray); }
-.card-name { font-size: 15px; font-weight: 800; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.card-arrow { color: var(--gh-primary); font-size: 16px; }
-.card-path { font-family: 'JetBrains Mono', monospace; font-size: 11px; color: var(--gh-primary); margin: 8px 0 10px; }
-.card-desc { font-size: 12px; color: var(--gh-text-dim); line-height: 1.6; min-height: 38px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
-.card-foot { display: flex; align-items: center; gap: 10px; margin-top: 12px; }
-.card-foot :deep(.uptime-bar) { flex: 1; }
-.card-latency { font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--gh-text-dim); white-space: nowrap; }
+.overall-status.ok { border-color: color-mix(in srgb, var(--gh-green) 42%, var(--gh-border)); }
+.overall-status.bad { border-color: color-mix(in srgb, var(--gh-red) 55%, var(--gh-border)); }
+.overall-icon {
+  width: 22px; height: 22px; flex: none; border-radius: 50%;
+  display: grid; place-items: center; font-size: 13px; font-weight: 800; color: #fff;
+}
+.overall-status.ok .overall-icon { background: var(--gh-green); }
+.overall-status.bad .overall-icon { background: var(--gh-red); }
+.overall-text { font-size: 14px; font-weight: 700; flex: 1; }
+.overall-status.ok .overall-text { color: var(--gh-green); }
+.overall-status.bad .overall-text { color: var(--gh-red); }
+.overall-count { font-family: 'JetBrains Mono', monospace; font-size: 12px; color: var(--gh-text-dim); }
+
+.monitor-list {
+  border: 1px solid var(--gh-border); border-radius: 14px;
+  background: var(--gh-panel); overflow: hidden;
+}
+.monitor-item {
+  display: flex; align-items: center; gap: 18px;
+  padding: 13px 18px; text-decoration: none; color: var(--gh-text);
+  border-bottom: 1px solid var(--gh-border);
+  transition: background 0.2s;
+}
+.monitor-item:last-child { border-bottom: none; }
+.monitor-item:hover { background: rgba(var(--gh-primary-rgb), 0.06); }
+.mi-info { display: flex; align-items: center; gap: 10px; flex: 1; min-width: 0; }
+.mi-uptime-pct {
+  font-family: 'JetBrains Mono', monospace; font-size: 11px; font-weight: 700;
+  padding: 3px 9px; border-radius: 20px; flex: none;
+  background: rgba(var(--gh-primary-rgb), 0.12); border: 1px solid var(--gh-border-strong);
+  color: var(--gh-text-dim);
+}
+.mi-uptime-pct.ok { color: var(--gh-green); border-color: color-mix(in srgb, var(--gh-green) 45%, transparent); }
+.mi-uptime-pct.warn { color: var(--gh-orange); border-color: color-mix(in srgb, var(--gh-orange) 45%, transparent); }
+.mi-uptime-pct.bad { color: var(--gh-red); border-color: color-mix(in srgb, var(--gh-red) 45%, transparent); }
+.mi-name {
+  font-size: 14px; font-weight: 700; flex: 1;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.monitor-item:hover .mi-name { color: var(--gh-primary); }
+.mi-cert {
+  font-size: 10px; padding: 3px 9px; border-radius: 6px; flex: none;
+  background: color-mix(in srgb, var(--gh-green) 16%, transparent);
+  color: var(--gh-green); border: 1px solid color-mix(in srgb, var(--gh-green) 35%, transparent);
+  white-space: nowrap;
+}
+.mi-cert.warn {
+  background: color-mix(in srgb, var(--gh-orange) 16%, transparent);
+  color: var(--gh-orange); border-color: color-mix(in srgb, var(--gh-orange) 35%, transparent);
+}
+.mi-chart { width: 34%; min-width: 180px; flex: none; }
+.mi-chart :deep(.uptime-bar) { width: 100%; }
+.mi-chart-foot {
+  display: flex; justify-content: space-between; margin-top: 4px;
+  font-family: 'JetBrains Mono', monospace; font-size: 10px; color: var(--gh-text-dim);
+}
 
 /* 友链卡片 */
 .link-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 14px; }
@@ -509,5 +603,8 @@ function healthText(h) {
   .hero-stats { gap: 22px; }
   .section-hint, .refresh-hint { display: none; }
   .user-name { display: none; }
+  .monitor-item { flex-direction: column; align-items: stretch; gap: 10px; }
+  .mi-chart { width: 100%; min-width: 0; }
+  .mi-cert { margin-left: auto; }
 }
 </style>

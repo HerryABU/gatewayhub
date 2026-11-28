@@ -60,7 +60,14 @@ export default {
     noFriendLinks: 'No friend links yet',
     externalOpen: 'Open in a new tab',
     adminEntry: 'Administrator entry',
-    allServices: 'All services'
+    allServices: 'All services',
+    allHealthy: 'All services are operational',
+    someDown: '{n} services down',
+    certDays: 'Cert valid: {n} days',
+    justNow: 'just now',
+    minsAgo: '{n}m ago',
+    hoursAgo: '{n}h ago',
+    daysAgo: '{n}d ago',
   },
   login: {
     title: 'Administrator Login',

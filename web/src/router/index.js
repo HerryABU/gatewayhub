@@ -46,9 +46,10 @@ router.beforeEach(async (to) => {
   if (configured && to.name === 'setup') {
     return { name: 'home' }
   }
-  // 管理员后台需登录
+  // 管理员后台需登录：访客页不显示登录入口，直接访问 /dashboard 者按 ?login=1
+  // 回到首页弹登录框——知道后台地址的管理员可进，普通访客看不到任何入口。
   if (to.name === 'dashboard' && !isAuthed()) {
-    return { name: 'home' }
+    return { name: 'home', query: { login: '1' } }
   }
   return true
 })

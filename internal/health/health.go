@@ -37,12 +37,20 @@ type routeHealth struct {
 	consecutiveOK   int
 	lastChecked     time.Time
 	history         []HistoryPoint
+	// 证书有效期（来自后端 TLS 证书），供访客页展示；每 certProbeInterval 更新一次。
+	certDays      int
+	certCheckedAt time.Time
 }
+
+// certProbeInterval 证书探测间隔：证书有效期变化以天计，无需跟随每次健康检查。
+const certProbeInterval = 5 * time.Minute
 
 // Info 健康信息（供 API 返回）
 type Info struct {
 	Status    string `json:"status"`
 	LatencyMs int64  `json:"latency_ms"`
+	// CertDays 后端 TLS 证书剩余天数；0 表示不适用（HTTP / 探测失败 / 无域名）。
+	CertDays int `json:"cert_days"`
 }
 
 // HistoryPoint 一次探测结果（用于分段状态条）
@@ -143,6 +151,7 @@ func (c *Checker) CheckAll() {
 		}
 		up, latency := c.checkRoute(r)
 		c.update(r.Prefix, up, latency)
+		c.refreshCert(r.Prefix, r.Target)
 	}
 }
 
@@ -165,6 +174,7 @@ func (c *Checker) CheckDue() {
 		}
 		up, latency := c.checkRoute(r)
 		c.update(r.Prefix, up, latency)
+		c.refreshCert(r.Prefix, r.Target)
 	}
 }
 
@@ -263,13 +273,68 @@ func (c *Checker) update(prefix string, up bool, latency int64) {
 	}
 }
 
+// probeCertDays 读取后端 TLS 证书的剩余天数（HTTP 后端返回 0）。
+// 不校验证书链：自签证书（宝塔等）也有有效期，访客页同样要显示。
+// 失败一律返回 0（视为不适用），不影响健康检查状态。
+func (c *Checker) probeCertDays(target_ string) int {
+	p, err := target.Parse(target_)
+	if err != nil || p.Scheme != "https" || p.Host == "" {
+		return 0
+	}
+	host, _, err := net.SplitHostPort(p.Host)
+	if err != nil {
+		host = p.Host // 无端口形式，如 chat.deepseek.com
+	}
+	// tls.Dial 必须带端口；target.Parse 保留的是原始 host（常无端口）。
+	dialAddr := p.Host
+	if _, _, splitErr := net.SplitHostPort(dialAddr); splitErr != nil {
+		dialAddr = net.JoinHostPort(host, "443")
+	}
+	dialer := &net.Dialer{Timeout: c.timeout}
+	conn, err := tls.DialWithDialer(dialer, "tcp", dialAddr, &tls.Config{
+		ServerName:         host,
+		InsecureSkipVerify: true, // 只读取有效期，不校验信任链
+	})
+	if err != nil {
+		return 0
+	}
+	defer conn.Close()
+	certs := conn.ConnectionState().PeerCertificates
+	if len(certs) == 0 {
+		return 0
+	}
+	days := int(time.Until(certs[0].NotAfter).Hours() / 24)
+	if days < 0 {
+		days = 0 // 已过期显示 0，前端按红色处理
+	}
+	return days
+}
+
+// refreshCert 按间隔刷新证书有效期，结果写入 state（探测在锁外进行）。
+func (c *Checker) refreshCert(prefix, target_ string) {
+	c.mu.RLock()
+	h, ok := c.state[prefix]
+	due := !ok || h.certCheckedAt.IsZero() || time.Since(h.certCheckedAt) >= certProbeInterval
+	c.mu.RUnlock()
+	if !due {
+		return
+	}
+	days := c.probeCertDays(target_)
+	c.mu.Lock()
+	if h, ok := c.state[prefix]; ok {
+		h.certDays = days
+		h.certCheckedAt = time.Now()
+	}
+	c.mu.Unlock()
+}
+
 // InfoMap 返回前缀到健康信息的映射
 func (c *Checker) InfoMap() map[string]Info {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
 	m := make(map[string]Info, len(c.state))
 	for k, v := range c.state {
-		m[k] = Info{Status: v.status, LatencyMs: v.latencyMs}
+		m[k] = Info{Status: v.status, LatencyMs: v.latencyMs, CertDays: v.certDays}
 	}
 	return m
 }

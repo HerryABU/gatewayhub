@@ -60,7 +60,14 @@ export default {
     noFriendLinks: '暂无友链',
     externalOpen: '在新标签页打开',
     adminEntry: '管理员入口',
-    allServices: '全部服务'
+    allServices: '全部服务',
+    allHealthy: '所有服务运行正常',
+    someDown: '{n} 个服务异常',
+    certDays: '证书有效期: {n} 天',
+    justNow: '刚刚',
+    minsAgo: '{n} 分钟前',
+    hoursAgo: '{n} 小时前',
+    daysAgo: '{n} 天前',
   },
   login: {
     title: '管理员登录',
