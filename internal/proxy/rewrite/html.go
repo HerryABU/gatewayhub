@@ -232,3 +232,32 @@ func (rw *Rewriter) rewriteCSSWith(b []byte, conv func(string) string) []byte {
 //   - API 前缀（/api...）：相对化（fetch/axios 按 document base 解析，配合 <base>）
 //   - 资源前缀（/assets 等）：保留「前缀绝对」（import / new URL / img.src 按模块/脚本 URL 解析，相对化会错位）
 //   - 整页导航 location.*：保留「前缀绝对」
+
+// rewriteChallengePaths 只给 WAF 挑战页的 HTML 属性（src/href/action/poster）
+// 补网关前缀，让 probe.js 等探针资源能被加载；不注入 shim、不碰脚本内容。
+// 挑战页必须原样执行探针 JS 才能通过校验——任何额外改写都会破坏 WAF 验证。
+func rewriteChallengePaths(b []byte, prefix string) []byte {
+	if prefix == "" || prefix == "/" {
+		return b
+	}
+	s := string(b)
+	// prefix 可能无前导斜杠（SanitizeChain 规范化后是 "qidian"），
+	// 但 HTML 属性里的路径必须以 / 开头，否则浏览器按相对路径解析到站点根。
+	prefix = "/" + strings.Trim(prefix, "/")
+	ps := prefix + "/"
+	s = htmlAttrRe.ReplaceAllStringFunc(s, func(m string) string {
+		sub := htmlAttrRe.FindStringSubmatch(m)
+		if len(sub) != 4 {
+			return m
+		}
+		return sub[1] + ps + strings.TrimPrefix(sub[2], "/") + sub[3]
+	})
+	s = htmlAttrBareRe.ReplaceAllStringFunc(s, func(m string) string {
+		sub := htmlAttrBareRe.FindStringSubmatch(m)
+		if len(sub) != 3 {
+			return m
+		}
+		return sub[1] + ps + strings.TrimPrefix(sub[2], "/")
+	})
+	return []byte(s)
+}

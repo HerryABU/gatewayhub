@@ -97,6 +97,38 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 	// 注意：必须带上 origin（SDK 回源）与 spoofHost（分层欺骗），否则嵌套链/链首重建会丢开关。
 	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin, wxAppid: rw.wxAppid, oauthRedirectMap: rw.oauthRedirectMap}
 
+	// WAF 反爬挑战页：只补资源路径前缀，绝不注入 shim/改探针内容。
+	// 起点对可疑客户端返回 202 + X-WAF-UUID + 极短 HTML，里面有
+	// <script src="/C2WF946J0/probe.js">。浏览器必须执行这个原样探针才能过挑战：
+	//   - 完全不改 → src 是根相对，解析到网关根 → 404，挑战永远过不了；
+	//   - 注入 shim / 改写脚本内容 → WAF 校验失败 → 白屏。
+	// 所以挑战页只走「HTML 属性路径补前缀」这一个最小动作，其余字节原样。
+	if isWAFChallenge(resp) {
+		if audit != nil {
+			audit.MarkSkip("waf_challenge_minimal_rewrite")
+		}
+		mt, _, _ := mime.ParseMediaType(resp.Header.Get("Content-Type"))
+		if mt == "text/html" || mt == "application/xhtml+xml" {
+			if _, ok := encodingOf(resp.Header.Get("Content-Encoding")); !ok {
+				return nil // 未知编码：一个字节都不碰
+			}
+			decoded, raw, enc, err := readBody(resp)
+			if err != nil {
+				if !errors.Is(err, ErrBodyTooLarge) && len(raw) > 0 {
+					resp.Body = io.NopCloser(bytes.NewReader(raw))
+				}
+				return nil
+			}
+			// 只补 src/href 的根相对路径前缀，不碰脚本内容、不注入 shim。
+			out := rewriteChallengePaths(decoded, rw.prefix)
+			if bytes.Equal(out, decoded) {
+				return nil
+			}
+			writeBody(resp, out, enc)
+		}
+		return nil
+	}
+
 	// 重定向 Location（无需读 body）
 	if loc := resp.Header.Get("Location"); loc != "" {
 		resp.Header.Set("Location", rw.rewriteLocation(loc))
@@ -223,4 +255,26 @@ func WithGWPath(req *http.Request, gwPath string) *http.Request {
 	ctx := context.WithValue(req.Context(), gwPathKey{}, gwPath)
 	*req = *req.WithContext(ctx)
 	return req
+}
+
+// isWAFChallenge 判断响应是否为 WAF 反爬挑战页，需原样透传给浏览器。
+// 特征（起点实测）：HTTP 202 + X-WAF-UUID / X-WAF-* 头，或 Server: Lego Server。
+// 这类页面的探针 JS（probe.js）必须原样执行才能通过挑战，网关不能注入 shim
+// 或改写任何字节，否则校验失败 → 白屏。
+func isWAFChallenge(resp *http.Response) bool {
+	if resp == nil || resp.StatusCode != http.StatusAccepted {
+		return false
+	}
+	if resp.Header.Get("X-WAF-UUID") != "" {
+		return true
+	}
+	if strings.Contains(strings.ToLower(resp.Header.Get("Server")), "lego server") {
+		return true
+	}
+	for k := range resp.Header {
+		if strings.HasPrefix(strings.ToLower(k), "x-waf-") {
+			return true
+		}
+	}
+	return false
 }
