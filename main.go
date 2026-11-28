@@ -40,7 +40,20 @@ var ip2regionXDB []byte
 func main() {
 	configPath := flag.String("config", "config.yaml", "配置文件路径")
 	archiveOnly := flag.Bool("archive", false, "只执行一次日志分层归档后退出（运维手动归档用）")
+	pwdValue := flag.String("pwd", "", "强制重置管理员密码：直接给新密码，或裸用 -pwd 交互式输入")
+	listOnly := flag.Bool("list", false, "实时探测并列出所有已启用服务的在线状态后退出")
+	// Go 的 flag 包对裸 -pwd（string flag 无值）会直接报错退出，
+	// 先把裸 -pwd 改写成哨兵值，flag 解析后才认得出来走交互输入。
+	rewriteBarePwdFlag(os.Args[1:])
 	flag.Parse()
+
+	// 离线运维命令：不启 HTTP 服务、不触发后台任务，执行完直接退出。
+	if cliRan(*pwdValue, *listOnly) {
+		if err := runCLI(*configPath, *pwdValue, *listOnly); err != nil {
+			log.Fatalf("[cli] %v", err)
+		}
+		return
+	}
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {

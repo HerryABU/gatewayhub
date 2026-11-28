@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.14**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.15**
 
 ---
 
@@ -203,6 +203,20 @@ cd web && npm install && npm run dev     # 监听 :5173，代理 /api 到 :8088
 
 - 相关开关：`access_log.enabled` / `access_log.dir` / `access_log.body` / `access_log.redact_sensitive` / `access_log.archive.*`。
 - 地图 GeoJSON（中国/世界）已随前端产物内嵌进二进制。
+
+### 命令行运维开关（离线执行，启动即退）
+与 `-archive` 一样，加载配置/数据库后执行一次即退出，不启 HTTP 服务、不触发后台任务。需要能读到本机 `config.yaml` 与数据库——这本身就是本机管理权限的证明。
+
+```bash
+gatewayhub.exe -pwd                 # 交互式强制重置管理员密码（提示两次输入，无需旧密码）
+gatewayhub.exe -pwd NewPass2026     # 直接强制重置管理员密码（新密码至少 6 位）
+gatewayhub.exe -list                # 实时探测并列出所有已启用服务的在线状态/延迟/后端
+gatewayhub.exe -config other.yaml -list   # 指定配置文件
+```
+
+- `-pwd` 用于**忘记密码被锁在门外**时从本机恢复访问，刻意不校验旧密码；仍要求新密码 ≥6 位、两次输入一致，bcrypt 加密后写库。
+- `-list` 实时探测（HTTP(S) GET 失败回退 TCP 拨号，并发上限 12、整体 30 秒超时），不读历史健康缓存，所以命令行结果就是当下状态。
+- 三个开关可组合使用（如 `-pwd xxx -list`：先改密再列服务）。
 
 ---
 
