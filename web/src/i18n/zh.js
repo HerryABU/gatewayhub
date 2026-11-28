@@ -123,6 +123,7 @@ export default {
     tlsSkipHint: '宝塔面板 / WSL 内网服务常用自签名证书，开启后才不会 502；仅影响网关到后端的连接，不影响浏览器访问网关。',
     sdkOriginHint: '第三方登录（微信/Apple）的回调改走原站域名，让开放平台域名白名单通过；登录流程在原站完成。',
     wxAppidHint: '微信登录初始化时替换为此 AppID（从原站获取）；留空则不替换。',
+    oauthMapHint: '把第三方登录回调 URL 里的旧域名换成新域名（JSON 对象），如 staging 域名改生产域名；对所有 SDK 生效',
   },
   stats: {
     totalPV: '总 PV',

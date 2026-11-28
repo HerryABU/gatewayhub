@@ -22,17 +22,18 @@ var reservedPrefixes = map[string]bool{
 }
 
 type routeReq struct {
-	Name          string `json:"name"`
-	Target        string `json:"target"`
-	Description   string `json:"description"`
-	Timeout       int    `json:"timeout"`
-	Interval      int    `json:"interval"`
-	Status        string `json:"status"`
-	CookieHat     string `json:"cookie_hat"`
-	DropForeign   bool   `json:"drop_foreign_cookies"`
-	TLSSkipVerify bool   `json:"tls_insecure_skip_verify"`
-	SDKOriginAuth bool   `json:"sdk_origin_auth"`
-	WXAppid       string `json:"wx_appid"`
+	Name             string `json:"name"`
+	Target           string `json:"target"`
+	Description      string `json:"description"`
+	Timeout          int    `json:"timeout"`
+	Interval         int    `json:"interval"`
+	Status           string `json:"status"`
+	CookieHat        string `json:"cookie_hat"`
+	DropForeign      bool   `json:"drop_foreign_cookies"`
+	TLSSkipVerify    bool   `json:"tls_insecure_skip_verify"`
+	SDKOriginAuth    bool   `json:"sdk_origin_auth"`
+	WXAppid          string `json:"wx_appid"`
+	OAuthRedirectMap string `json:"oauth_redirect_map"`
 }
 
 // validatePrefix 校验转发名（支持多级前缀，如 "v2/beta"，每段以小写字母开头）
@@ -113,18 +114,19 @@ func (h *Handler) ListRoutes(c *gin.Context) {
 // CreateRoute POST /api/routes
 func (h *Handler) CreateRoute(c *gin.Context) {
 	var req struct {
-		Name          string `json:"name" binding:"required"`
-		Prefix        string `json:"prefix" binding:"required"`
-		Target        string `json:"target" binding:"required"`
-		Description   string `json:"description"`
-		Timeout       int    `json:"timeout"`
-		Interval      int    `json:"interval"`
-		Status        string `json:"status"`
-		CookieHat     string `json:"cookie_hat"`
-		DropForeign   bool   `json:"drop_foreign_cookies"`
-		TLSSkipVerify bool   `json:"tls_insecure_skip_verify"`
-		SDKOriginAuth bool   `json:"sdk_origin_auth"`
-		WXAppid       string `json:"wx_appid"`
+		Name             string `json:"name" binding:"required"`
+		Prefix           string `json:"prefix" binding:"required"`
+		Target           string `json:"target" binding:"required"`
+		Description      string `json:"description"`
+		Timeout          int    `json:"timeout"`
+		Interval         int    `json:"interval"`
+		Status           string `json:"status"`
+		CookieHat        string `json:"cookie_hat"`
+		DropForeign      bool   `json:"drop_foreign_cookies"`
+		TLSSkipVerify    bool   `json:"tls_insecure_skip_verify"`
+		SDKOriginAuth    bool   `json:"sdk_origin_auth"`
+		WXAppid          string `json:"wx_appid"`
+		OAuthRedirectMap string `json:"oauth_redirect_map"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -177,18 +179,19 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 	}
 
 	route := models.Route{
-		Name:          name,
-		Prefix:        prefix,
-		Target:        strings.TrimSpace(req.Target),
-		Description:   strings.TrimSpace(req.Description),
-		Timeout:       timeout,
-		Interval:      interval,
-		Status:        status,
-		CookieHat:     strings.TrimSpace(req.CookieHat),
-		DropForeign:   req.DropForeign,
-		TLSSkipVerify: req.TLSSkipVerify,
-		SDKOriginAuth: req.SDKOriginAuth,
-		WXAppid:       strings.TrimSpace(req.WXAppid),
+		Name:             name,
+		Prefix:           prefix,
+		Target:           strings.TrimSpace(req.Target),
+		Description:      strings.TrimSpace(req.Description),
+		Timeout:          timeout,
+		Interval:         interval,
+		Status:           status,
+		CookieHat:        strings.TrimSpace(req.CookieHat),
+		DropForeign:      req.DropForeign,
+		TLSSkipVerify:    req.TLSSkipVerify,
+		SDKOriginAuth:    req.SDKOriginAuth,
+		WXAppid:          strings.TrimSpace(req.WXAppid),
+		OAuthRedirectMap: strings.TrimSpace(req.OAuthRedirectMap),
 	}
 	if err := h.DB.Create(&route).Error; err != nil {
 		h.fail(c, 2001, "创建失败")
@@ -260,6 +263,7 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 	route.TLSSkipVerify = req.TLSSkipVerify
 	route.SDKOriginAuth = req.SDKOriginAuth
 	route.WXAppid = strings.TrimSpace(req.WXAppid)
+	route.OAuthRedirectMap = strings.TrimSpace(req.OAuthRedirectMap)
 	if err := h.DB.Save(&route).Error; err != nil {
 		h.fail(c, 2001, "更新失败")
 		return

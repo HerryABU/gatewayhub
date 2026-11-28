@@ -123,6 +123,7 @@ export default {
     tlsSkipHint: 'Enable for self-signed backends (Baota panel / WSL intranet) to avoid 502. Affects only gateway-to-backend TLS, not browser-to-gateway.',
     sdkOriginHint: 'Route OAuth callbacks (WeChat/Apple) back to the origin domain so provider domain whitelists pass; login completes on the original site.',
     wxAppidHint: 'Replace WeChat appid with this value at SDK init (get it from origin site); empty = no replacement.',
+    oauthMapHint: 'Replace old host with new host in OAuth redirect_uri (JSON object), e.g. staging to production; applies to all SDKs',
   },
   stats: {
     totalPV: 'Total PV',

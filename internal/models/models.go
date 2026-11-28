@@ -36,9 +36,13 @@ type Route struct {
 	SpoofHostname bool `gorm:"default:false" json:"spoof_hostname"`
 	// WXAppid 非空时，shim 在 WxLogin 初始化时把 appid 换成该值（官方 appid），
 	// 配合 SDKOriginAuth 让微信登录在反代域名下正常工作。
-	WXAppid   string    `gorm:"size:64;default:''" json:"wx_appid"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	WXAppid string `gorm:"size:64;default:''" json:"wx_appid"`
+	// OAuthRedirectMap 通用回调域名修正：JSON 对象 {旧域名:新域名}。
+	// shim 在第三方 OAuth URL 的 redirect_uri 里做域名替换，一次覆盖微信/QQ/飞书等。
+	// 典型用途：把 staging/dev 回调域名（chat-dev.deepseek.com）换成生产域名。
+	OAuthRedirectMap string    `gorm:"size:1000;default:''" json:"oauth_redirect_map"`
+	CreatedAt        time.Time `json:"created_at"`
+	UpdatedAt        time.Time `json:"updated_at"`
 }
 
 // AccessLog 访问日志表

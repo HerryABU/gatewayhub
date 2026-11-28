@@ -38,7 +38,20 @@ const prefixShimTemplate = `(function(){
   var P=__P__;
   var O_AUTH=__O__;
   var WX_APPID=__A__;
+  var REDIRECT_MAP=__M__;
   if(!P||P==="/")return;
+  // 通用 OAuth 回调域名修正：把 redirect_uri 里匹配 REDIRECT_MAP 的域名换成新域名。
+  // 典型：staging(chat-dev.deepseek.com) → 生产(chat.deepseek.com)。对微信/QQ/飞书
+  // 等所有第三方 OAuth 一视同仁，只动 redirect_uri 的 origin，不碰路径/state/code。
+  function mapRedirectHost(u){
+    if(!REDIRECT_MAP)return u;
+    try{
+      var x=new URL(u),h=x.hostname,nh=REDIRECT_MAP[h]||REDIRECT_MAP[x.host];
+      if(!nh)return u;
+      x.hostname=nh;
+      return x.toString();
+    }catch(e){return u}
+  }
   var PS=P+"/";
   window.__GATEWAY_PREFIX__=P;
   // 分层欺骗 + SDK 透传：wxLogin.js 从原 CDN 正常加载（透传），只在它把
@@ -77,17 +90,31 @@ const prefixShimTemplate = `(function(){
       if(uu.origin===location.origin)return u;
       var ru=uu.searchParams.get("redirect_uri");
       if(!ru)return u;
+      var changed=false;
+      // ① 通用域名映射：先修 redirect_uri 自身的域名（含嵌套 redirect_uri，如飞书
+      //    accounts.feishu.cn/...?redirect_uri=chat-dev.deepseek.com/callback）。
+      var mapped=mapRedirectHost(ru);
+      if(mapped!==ru){ru=mapped;changed=true;uu.searchParams.set("redirect_uri",ru)}
+      try{
+        var inner=new URL(ru);
+        var iru=inner.searchParams&&inner.searchParams.get("redirect_uri");
+        if(iru){
+          var imapped=mapRedirectHost(iru);
+          if(imapped!==iru){inner.searchParams.set("redirect_uri",imapped);ru=inner.toString();changed=true;uu.searchParams.set("redirect_uri",ru)}
+        }
+      }catch(e){}
       var r;
-      try{r=new URL(ru,location.href)}catch(e){return u}
-      if(r.origin!==location.origin)return u;
-      // 回源模式：把回调换成原站 origin，让微信/Apple 开放平台的
-      // 域名白名单校验通过（登录流程在原站完成），路径保持后端原始路径。
+      try{r=new URL(ru,location.href)}catch(e){return changed?uu.toString():u}
+      if(r.origin!==location.origin){
+        return changed?uu.toString():u; // 域名已修正但非本站：保留修正结果，不再补前缀
+      }
+      // 回源模式：把回调换成原站 origin，让开放平台域名白名单校验通过。
       if(O_AUTH){
         uu.searchParams.set("redirect_uri",O_AUTH+r.pathname+(r.search||"")+(r.hash||""));
         return uu.toString();
       }
       var fixed=fix(r.pathname+(r.search||"")+(r.hash||""));
-      if(fixed===r.pathname+(r.search||"")+(r.hash||""))return u;
+      if(fixed===r.pathname+(r.search||"")+(r.hash||""))return changed?uu.toString():u;
       uu.searchParams.set("redirect_uri",location.origin+fixed);
       return uu.toString();
     }catch(e){return u}
@@ -217,6 +244,12 @@ func (rw *Rewriter) prefixShim() string {
 		}
 	}
 	js = strings.Replace(js, "__A__", string(appidJSON), 1)
+	// __M__ 是 OAuth 回调域名映射（JSON 对象）；空则注入 null（不映射）。
+	mapJSON := "null"
+	if rw.oauthRedirectMap != "" {
+		mapJSON = rw.oauthRedirectMap // entry.go 已校验为合法 JSON
+	}
+	js = strings.Replace(js, "__M__", mapJSON, 1)
 	return "<script data-gateway-prefix-shim=\"1\">" + js + "</script>"
 }
 

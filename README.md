@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.16**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.17**
 
 ---
 
@@ -22,6 +22,8 @@
 - **外站 SPA 的 CORS 适配**（DeepSeek 实测）：外站 `<script crossorigin integrity src="https://cdn/...">` 从网关 origin 加载时会被 CDN 的 `ACAO: https://*.deepseek.com` 拒绝，页面卡在"资源加载异常"却返回 200。网关自动剥掉外站经典脚本的 `crossorigin`/`integrity`（`type=module` 与本站脚本不动），按经典跨域脚本加载，页面与 API 均正常。注意：`@font-face` 字体与 wasm 强制 CORS，仍可能降级（不影响功能）
 - **第三方登录 SDK 的回调前缀**（微信 wxLogin 等）：SDK 把本站回调 URL 嵌在第三方域名 URL 的 `redirect_uri` 参数里，前端常用 `location.origin + "/api/oauth/callback"` 拼出漏前缀的地址 → 回调打到网关根 404。运行期 shim 定向修复 `redirect_uri`（仅当它是本站 origin 时补前缀，`state` 等参数不碰）。
 - **SDK 登录回原站 + 分层欺骗**（路由开关 `sdk_origin_auth` / 字段 `wx_appid`）：微信/Apple 开放平台有回调**域名白名单**，网关域名不在登记名单时必然回「redirect_uri 参数错误」。开启后 shim 把 `redirect_uri` 换成后端原站 origin（如 `https://chat.deepseek.com/...`）。
+  - **通用 OAuth 回调域名修正**（字段 `oauth_redirect_map`）：JSON 对象 `{旧域名:新域名}`，shim 在**所有**第三方 OAuth URL 的 `redirect_uri` 里做域名替换（含飞书那种嵌套 redirect_uri），一次覆盖微信/QQ/飞书等。典型：staging（`chat-dev.deepseek.com`）→ 生产（`chat.deepseek.com`）。
+  - **边界（实测）**：开放平台白名单是硬约束——把 redirect_uri 改成网关域名，微信报参数错误、QQ 报 `100010 redirect uri is illegal`；登录态 cookie 按域名隔离，无法从原站搬到网关域名。所以网关闭环需目标站点服务端配合（登记网关域名或按 Host 动态输出回调域），网关只能自动修正**错误的环境/域名判定**，不能绕过白名单。
   - **分层欺骗的关键**：SPA（DeepSeek 实测）在 JS bundle 里按 `location.hostname` 判定 dev/production：反代地址是 IP → 判为 dev → 用测试 appid（`wx58…`）→ 微信拒。SDK 从原 CDN 正常加载（透传），shim 预设 `WxLogin` setter，在 SDK 初始化那一刻把 `appid` 换成 `wx_appid` 配置值、回调交给 `fixOAuth`。真机验证：微信二维码正常渲染，appid/redirect_uri 均为官方值、0 个 4xx/JS 错误。
   - `wx_appid` 填站点生产环境的官方 appid（从原站运行时抓取，如 DeepSeek 的 `wx932d4fdaf46d5611`）；留空则只回源不换 appid。hook 只影响 `WxLogin` 构造参数，不碰其它业务逻辑。
 - **自签证书后端（宝塔面板 / WSL 内网）**：路由表单的「跳过后端证书校验」开关（字段 `tls_insecure_skip_verify`）打开后即可反代 `https://172.30.19.205:19320/1c84b34b` 这类自签 HTTPS + 安全入口地址；默认关闭（正常外站仍严格校验）。开关只影响网关→后端这一段，浏览器→网关不受影响；健康检查用同一策略，不会出现"显示 healthy 却 502"

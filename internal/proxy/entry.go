@@ -2,6 +2,7 @@ package proxy
 
 import (
 	"crypto/tls"
+	"encoding/json"
 	"net"
 	"net/http"
 	"net/http/httputil"
@@ -81,6 +82,10 @@ func (m *Manager) buildEntry(r models.Route) (*Entry, error) {
 	}
 	if r.WXAppid != "" {
 		rw.SetWXAppid(r.WXAppid)
+	}
+	// 通用 OAuth 回调域名映射：校验为合法 JSON 对象后才注入 shim。
+	if r.OAuthRedirectMap != "" && json.Valid([]byte(r.OAuthRedirectMap)) {
+		rw.SetOAuthRedirectMap(r.OAuthRedirectMap)
 	}
 	entry.Proxy = &httputil.ReverseProxy{
 		Director: func(req *http.Request) {

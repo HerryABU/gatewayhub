@@ -44,6 +44,8 @@ type Rewriter struct {
 	origin string // SDK 回调回源的原站 origin（如 https://chat.deepseek.com）；空=补网关前缀
 	// wxAppid 非空时，shim hook WxLogin 构造参数，把 appid 换成该官方值。
 	wxAppid string
+	// oauthRedirectMap 通用 OAuth 回调域名替换（JSON: {旧域名:新域名}）。
+	oauthRedirectMap string
 }
 
 // New 创建改写器：prefix 为网关对外前缀（如 java-order），root 为后端根路径，host 为后端 host。
@@ -62,6 +64,9 @@ func NewWithOrigin(prefix, root, host, origin string) *Rewriter {
 // 仅当路由开启 spoof_hostname 时调用；它让前端环境判定以为自己跑在官方域名。
 // SetWXAppid 设置微信登录欺骗用的官方 appid（分层欺骗的一部分）。
 func (rw *Rewriter) SetWXAppid(appid string) { rw.wxAppid = appid }
+
+// SetOAuthRedirectMap 设置通用 OAuth 回调域名映射。
+func (rw *Rewriter) SetOAuthRedirectMap(m string) { rw.oauthRedirectMap = m }
 
 func (rw *Rewriter) gatewayPath() string {
 	return "/" + rw.prefix
@@ -90,7 +95,7 @@ func (rw *Rewriter) Modify(resp *http.Response) error {
 		defer func() { audit.Status = resp.StatusCode }()
 	}
 	// 注意：必须带上 origin（SDK 回源）与 spoofHost（分层欺骗），否则嵌套链/链首重建会丢开关。
-	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin, wxAppid: rw.wxAppid}
+	rw = &Rewriter{prefix: full, root: rw.root, host: rw.host, origin: rw.origin, wxAppid: rw.wxAppid, oauthRedirectMap: rw.oauthRedirectMap}
 
 	// 重定向 Location（无需读 body）
 	if loc := resp.Header.Get("Location"); loc != "" {

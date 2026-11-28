@@ -629,3 +629,26 @@ func TestShimWXAppidHook(t *testing.T) {
 		}
 	}
 }
+
+// TestShimOAuthRedirectMap 通用 OAuth 回调域名映射：所有第三方 OAuth URL 的
+// redirect_uri 里匹配旧域名的都换成新域名（一次覆盖微信/QQ/飞书），
+// 且支持飞书那种嵌套 redirect_uri。未配置时注入 null。
+func TestShimOAuthRedirectMap(t *testing.T) {
+	plain := New("dps", "", "chat.deepseek.com").prefixShim()
+	if !strings.Contains(plain, "var REDIRECT_MAP=null") {
+		t.Error("未配置映射时应注入 null")
+	}
+	rw := New("dps", "", "chat.deepseek.com")
+	rw.SetOAuthRedirectMap(`{"chat-dev.deepseek.com":"chat.deepseek.com"}`)
+	shim := rw.prefixShim()
+	for _, snippet := range []string{
+		`"chat-dev.deepseek.com":"chat.deepseek.com"`,
+		"function mapRedirectHost",
+		"var mapped=mapRedirectHost(ru)",
+		"var imapped=mapRedirectHost(iru)", // 嵌套 redirect_uri（飞书）
+	} {
+		if !strings.Contains(shim, snippet) {
+			t.Errorf("shim 缺少通用域名映射片段 %q", snippet)
+		}
+	}
+}
