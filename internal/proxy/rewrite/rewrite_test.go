@@ -549,3 +549,24 @@ func TestStripCrossOriginOnExternalScript(t *testing.T) {
 		t.Errorf("module 脚本的 crossorigin 应保留: %s", mod)
 	}
 }
+
+// TestShimOAuthCallbackFix 微信/Apple 等第三方登录 SDK 把本站回调 URL 嵌在
+// 第三方域名 URL 的 redirect_uri 参数里，且常漏掉网关前缀 → 微信回
+// "redirect_uri 参数错误"、回调打到网关根 404。shim 必须定向修复。
+func TestShimOAuthCallbackFix(t *testing.T) {
+	rw := New("dps", "", "chat.deepseek.com")
+	shim := rw.prefixShim()
+	if shim == "" {
+		t.Fatal("shim 未生成")
+	}
+	for _, snippet := range []string{
+		"fixOAuth",                         // OAuth 回调修复函数存在
+		`searchParams.get("redirect_uri")`, // 只读 redirect_uri，不碰 state 等数据
+		`uu.origin===location.origin`,      // 本站 URL 不被当第三方处理
+		`r.origin!==location.origin`,       // 外站回调不误改
+	} {
+		if !strings.Contains(shim, snippet) {
+			t.Errorf("shim 缺少 OAuth 回调修复片段 %q", snippet)
+		}
+	}
+}

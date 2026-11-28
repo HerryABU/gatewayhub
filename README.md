@@ -5,7 +5,7 @@
 
 轻量级、带管理界面、支持动态配置的统一接入网关。所有后端服务通过**一个端口**对外暴露，路径格式 `/{转发名}/...`，路由规则可实时增删改、无需重启。
 
-> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.9**
+> 开源协议：GNU AGPL-3.0 · 后端 Go 1.21+ · 前端 Vue 3 + Vite + Element Plus + ECharts · **v1.7.10**
 
 ---
 
@@ -20,6 +20,7 @@
 - 后端地址支持 `:8080`、`:8080/api/v1`、完整 URL（**含自定义端口**，如 `http://example.com:8443`）及 **`${ENV}` 环境变量**（如 `http://${ORDER_HOST}:8080`，未设置时创建路由报错）
 - **外部网站代理**：完整 URL 目标天然支持（含 HTTPS），健康检查同样按 scheme/host 探测；外站用 HTML5 无引号属性（如 `<script src=/s.js>`）时也会改写，不会因资源落到网关根路径而报 `SyntaxError`
 - **外站 SPA 的 CORS 适配**（DeepSeek 实测）：外站 `<script crossorigin integrity src="https://cdn/...">` 从网关 origin 加载时会被 CDN 的 `ACAO: https://*.deepseek.com` 拒绝，页面卡在"资源加载异常"却返回 200。网关自动剥掉外站经典脚本的 `crossorigin`/`integrity`（`type=module` 与本站脚本不动），按经典跨域脚本加载，页面与 API 均正常。注意：`@font-face` 字体与 wasm 强制 CORS，仍可能降级（不影响功能）
+- **第三方登录 SDK 的回调前缀**（微信 wxLogin 等）：SDK 把本站回调 URL 嵌在第三方域名 URL 的 `redirect_uri` 参数里，前端常用 `location.origin + "/api/oauth/callback"` 拼出漏前缀的地址 → 回调打到网关根 404。运行期 shim 定向修复 `redirect_uri`（仅当它是本站 origin 时补前缀，`state` 等参数不碰）。**边界**：微信/Apple 开放平台有回调**域名白名单**，网关域名不在登记名单时微信仍会返回「redirect_uri 参数错误」——这是第三方平台的授权配置，网关无法绕过；要真正支持需把网关域名登记到对方开放平台
 - **自签证书后端（宝塔面板 / WSL 内网）**：路由表单的「跳过后端证书校验」开关（字段 `tls_insecure_skip_verify`）打开后即可反代 `https://172.30.19.205:19320/1c84b34b` 这类自签 HTTPS + 安全入口地址；默认关闭（正常外站仍严格校验）。开关只影响网关→后端这一段，浏览器→网关不受影响；健康检查用同一策略，不会出现"显示 healthy 却 502"
 - **响应内容「绝对改相对」重写**：HTML 属性/内联样式根绝对路径 → 文档相对路径（`./x`），并注入 `<base href="/{prefix}/">` 兜底解析；外链 CSS 的 `url()/@import` 按 CSS 文件自身位置换算相对路径；JS **只改整页导航**（`location.href|assign|replace`），其余字面量一律不动——文本层判不出「URL 还是请求体数据」，实测已踩中两次（NVS 的 `{path:"/api/x"}`、openlist 的 `$.get("/public/plugins")`），这类地址全部交给运行期 shim 在发请求时补前缀
 - **运行期挂载点改写**：内联配置里值为 `"/"` 的挂载点（`base_path` / `basename` / `baseURL` / `publicPath` / `router_base`）改为 `/{prefix}`；**刻意不碰 `__dynamic_base__`**（那是应用运行态，伪造会让 openlist 走进 CDN 分支拼出 `/openlistundefined`）。SPA 的路由 basename、axios baseURL、Vite preload 的 chunk 基址都取自这里——**后端零配置就能挂到子路径**（实测 openlist v4.2.10：登录页与 6 个 `/openlist/api/*` 全 200，0 个 4xx）

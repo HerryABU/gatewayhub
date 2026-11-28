@@ -39,8 +39,36 @@ const prefixShimTemplate = `(function(){
   if(!P||P==="/")return;
   var PS=P+"/";
   window.__GATEWAY_PREFIX__=P;
+  // 修 OAuth 回调地址：第三方登录 SDK（微信 wxLogin 等）把本站回调 URL
+  // 嵌在「第三方域名 URL」的 redirect_uri 查询参数里。前端常用
+  // location.origin + "/api/oauth/callback" 拼出 http://gw/api/...，
+  // 漏掉网关前缀 → 微信回 "redirect_uri 参数错误"、回调打到网关根 404。
+  // 只改 redirect_uri 这一个参数，且仅当它的 origin 与本站相同；
+  // 其它查询参数（state / 业务数据）一律不碰，避免污染数据。
+  function fixOAuth(u){
+    try{
+      var uu=new URL(u);
+      if(uu.origin===location.origin)return u;
+      var ru=uu.searchParams.get("redirect_uri");
+      if(!ru)return u;
+      var r;
+      try{r=new URL(ru,location.href)}catch(e){return u}
+      if(r.origin!==location.origin)return u;
+      var fixed=fix(r.pathname+(r.search||"")+(r.hash||""));
+      if(fixed===r.pathname+(r.search||"")+(r.hash||""))return u;
+      uu.searchParams.set("redirect_uri",location.origin+fixed);
+      return uu.toString();
+    }catch(e){return u}
+  }
   function fix(u){
     if(typeof u!=="string"||!u)return u;
+    // 第三方域名的完整 URL 原样放行，但要先修里面的 OAuth 回调参数。
+    if(u.charCodeAt(0)!==47){
+      try{
+        var abs=new URL(u,location.href);
+        if(abs.origin!==location.origin)return fixOAuth(u);
+      }catch(e){}
+    }
     // 同源绝对 URL 先剥回站点内路径。
     // vite 的 __vitePreload 用 new URL(dep, import.meta.url) 解析依赖，dep 是根相对
     // 的 "/assets/x.css"，new URL 会把它规约成 http://gw/assets/x.css —— 已经带上
