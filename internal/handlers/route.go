@@ -55,11 +55,30 @@ func validatePrefix(prefix string) (string, bool) {
 }
 
 // ListRoutes GET /api/routes（公开，合并健康状态 + 延迟 + 分段历史）
+// publicRoutes 把路由列表收敛成访客视角：只保留 active、清空 target（后端地址）。
+// 用于 GET /api/routes 对未登录访客返回——避免停用服务与后端拓扑从接口泄漏。
+func publicRoutes(routes []models.Route) []models.Route {
+	out := make([]models.Route, 0, len(routes))
+	for _, r := range routes {
+		if r.Status != models.StatusActive {
+			continue
+		}
+		r.Target = ""
+		out = append(out, r)
+	}
+	return out
+}
+
 func (h *Handler) ListRoutes(c *gin.Context) {
 	var routes []models.Route
 	if err := h.DB.Order("id asc").Find(&routes).Error; err != nil {
 		h.fail(c, 2001, "查询失败")
 		return
+	}
+	// 访客视角：只返回已启用路由，且隐藏后端地址（target）——
+	// 该接口供访客主页展示服务列表，未启用路由与后端拓扑属管理信息。
+	if c.GetString("username") == "" {
+		routes = publicRoutes(routes)
 	}
 	infoMap := h.Health.InfoMap()
 	historyMap := h.Health.HistoryMap()

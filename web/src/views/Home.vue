@@ -168,8 +168,10 @@
         <div v-else class="empty-note">{{ t('home.noFriendLinks') }}</div>
       </section>
 
-      <!-- ============ 03 全部服务（详情页） ============ -->
-      <section id="all-services" class="section panel-section">
+      <!-- ============ 03 全部服务（详情页，仅管理员可见） ============
+           访客态不显示：该表含已停用路由与后端地址，属管理视角；
+           访客只看上面「已开放服务」监控列表（已过滤 status=active）。 -->
+      <section v-if="authed" id="all-services" class="section panel-section">
         <div class="section-head">
           <div>
             <div class="section-index">03 / OVERVIEW</div>

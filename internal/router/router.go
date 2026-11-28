@@ -47,7 +47,9 @@ func Setup(h *handlers.Handler, dist fs.FS) http.Handler {
 		{
 			gated.POST("/auth/login", h.Login)
 			gated.POST("/auth/refresh", h.Refresh)
-			gated.GET("/routes", h.ListRoutes)
+			// 路由列表对访客开放（主页展示），但需识别身份以过滤停用路由/后端地址。
+			// optionalAuth 解析成功注入 username，失败也放行（返回访客视角）。
+			gated.GET("/routes", optionalAuth(h.Cfg.JWT.Secret), h.ListRoutes)
 
 			admin := gated.Group("")
 			admin.Use(jwtAuth(h.Cfg.JWT.Secret))
@@ -267,6 +269,21 @@ func setupLocalGuard(h *handlers.Handler) gin.HandlerFunc {
 			return
 		}
 		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{"code": 403, "message": "setup is local-only"})
+	}
+}
+
+// optionalAuth 尝试解析 JWT：成功则注入 username（视为管理员），失败也放行。
+// 用于「访客与管理员共用、但按身份返回不同字段」的接口（如 GET /routes）。
+func optionalAuth(secret string) gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if h := c.GetHeader("Authorization"); strings.HasPrefix(h, "Bearer ") {
+			tokenStr := strings.TrimPrefix(h, "Bearer ")
+			if claims, err := auth.ParseToken(secret, tokenStr); err == nil {
+				c.Set("username", claims.Username)
+				c.Set("role", claims.Role)
+			}
+		}
+		c.Next()
 	}
 }
 
