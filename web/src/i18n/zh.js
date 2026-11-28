@@ -75,7 +75,8 @@ export default {
     password: '密码',
     remember: '记住我（7 天有效）',
     submit: '登录',
-    hint: '默认管理员：admin / admin123'
+    hint: '默认管理员：admin / admin123',
+    backHome: '返回首页'
   },
   nav: {
     routes: '路由管理',

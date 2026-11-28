@@ -3,11 +3,13 @@ import { isAuthed } from '../store'
 import { basePath } from '../base'
 import api from '../api'
 import Home from '../views/Home.vue'
+import Login from '../views/Login.vue'
 import Dashboard from '../views/Dashboard.vue'
 import SetupWizard from '../views/SetupWizard.vue'
 
 const routes = [
   { path: '/', name: 'home', component: Home },
+  { path: '/login', name: 'login', component: Login },
   { path: '/dashboard', name: 'dashboard', component: Dashboard },
   { path: '/setup', name: 'setup', component: SetupWizard }
 ]
@@ -46,10 +48,13 @@ router.beforeEach(async (to) => {
   if (configured && to.name === 'setup') {
     return { name: 'home' }
   }
-  // 管理员后台需登录：访客页不显示登录入口，直接访问 /dashboard 者按 ?login=1
-  // 回到首页弹登录框——知道后台地址的管理员可进，普通访客看不到任何入口。
+  // 管理员后台需登录：未登录访问 /dashboard 时跳转独立登录页，带 redirect 回原目标。
   if (to.name === 'dashboard' && !isAuthed()) {
-    return { name: 'home', query: { login: '1' } }
+    return { name: 'login', query: { redirect: '/dashboard' } }
+  }
+  // 已登录访问 /login 直接放行到控制台，避免重复登录
+  if (to.name === 'login' && isAuthed()) {
+    return { name: 'dashboard' }
   }
   return true
 })

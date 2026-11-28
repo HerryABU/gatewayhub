@@ -208,16 +208,19 @@
         <span>© {{ year }} {{ siteName }}</span>
         <span>·</span>
         <span>{{ appVersion }}</span>
+        <span>·</span>
+        <!-- 低调的管理入口：访客显示「登录」直达独立登录页，管理员显示「控制台」 -->
+        <a class="foot-entry" :href="authed ? joinBase('dashboard') : joinBase('login')">
+          {{ authed ? t('home.enterConsole') : t('login.submit') }}
+        </a>
       </footer>
     </main>
 
-    <LoginDialog v-model="showLogin" />
   </div>
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onUnmounted } from 'vue'
-import { useRoute, useRouter } from 'vue-router'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { ArrowDown } from '@element-plus/icons-vue'
 import api from '../api'
@@ -225,16 +228,12 @@ import { authState, clearAuth } from '../store'
 import { SUPPORTED_LOCALES, setLocale } from '../i18n'
 import { theme, toggleTheme } from '../theme'
 import { basePath, joinBase } from '../base'
-import LoginDialog from '../components/LoginDialog.vue'
 import UptimeBar from '../components/UptimeBar.vue'
 
 const { t, locale } = useI18n()
-const route = useRoute()
-const router = useRouter()
 const routes = ref([])
 const links = ref([])
 const loading = ref(false)
-const showLogin = ref(false)
 const siteName = ref('GatewayHub')
 const intro = ref('')
 // 版本号以服务端 /api/settings 为准，i18n 里的值只作首帧兜底：
@@ -300,15 +299,8 @@ onMounted(() => {
   loadLinks()
   load()
   timer = setInterval(load, 10000)
-  // 管理员直达 /dashboard 未登录时，路由守卫带 ?login=1 回到这里弹登录框。
-  if (route.query.login === '1') showLogin.value = true
 })
 onUnmounted(() => clearInterval(timer))
-
-// 登录框关闭后清掉 ?login=1，避免刷新页面又弹出登录框。
-watch(showLogin, (v) => {
-  if (!v && route.query.login === '1') router.replace({ name: 'home' })
-})
 
 const year = new Date().getFullYear()
 const total = computed(() => routes.value.length)
@@ -595,7 +587,13 @@ function healthText(h) {
 .route-link:hover { color: var(--gh-primary-soft); }
 .table-tip { margin-top: 14px; font-size: 12px; }
 
-.page-foot { margin-top: 26px; text-align: center; font-size: 12px; color: var(--gh-text-dim); display: flex; justify-content: center; gap: 8px; }
+.page-foot { margin-top: 26px; text-align: center; font-size: 12px; color: var(--gh-text-dim); display: flex; justify-content: center; align-items: center; gap: 8px; flex-wrap: wrap; }
+.foot-entry {
+  color: var(--gh-text-dim); text-decoration: none;
+  border-bottom: 1px dashed var(--gh-border-strong); padding-bottom: 1px;
+  transition: color 0.2s, border-color 0.2s;
+}
+.foot-entry:hover { color: var(--gh-primary); border-bottom-color: var(--gh-primary); }
 @media (max-width: 760px) {
   .gh-nav { display: none; }
   .gh-header { padding: 12px 16px; }

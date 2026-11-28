@@ -75,7 +75,8 @@ export default {
     password: 'Password',
     remember: 'Remember me (7 days)',
     submit: 'Sign in',
-    hint: 'Default admin: admin / admin123'
+    hint: 'Default admin: admin / admin123',
+    backHome: 'Back to home'
   },
   nav: {
     routes: 'Routes',
