@@ -27,6 +27,17 @@ var (
 	cssImportRe    = regexp.MustCompile(`(?i)(@import\s+)(["'])(/[^"']+)(["'])`)
 	scriptBlockRe  = regexp.MustCompile(`(?is)(<script\b[^>]*>)(.*?)(</script>)`)
 	scriptSrcRe    = regexp.MustCompile(`(?i)\bsrc\s*=`)
+	// 外站 script 的 crossorigin/integrity：
+	// 反代 SPA（DeepSeek 实测）把页面挂在 /dps/ 下后，外站 CDN 上的 <script
+	// crossorigin integrity="sha384-…" src="https://fe-static.deepseek.com/...">
+	// 会发起 CORS 请求；CDN 返回 ACAO: https://*.deepseek.com，浏览器 origin 是网关
+	// 域名 → 被拒 → 页面卡在「资源加载异常」（但 HTTP 200）。去掉 crossorigin 让
+	// 浏览器按经典跨域脚本加载（不做 CORS），同时必须去掉 integrity —— 跨域无 CORS
+	// 时 SRI 校验会失败、脚本同样不执行。只针对 https:// 的外站 script。
+	crossOriginAttrRe = regexp.MustCompile(`(?i)\s+crossorigin(?:\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+))?`)
+	integrityAttrRe   = regexp.MustCompile(`(?i)\s+integrity\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)`)
+	externalScriptRe  = regexp.MustCompile(`(?is)<script\b[^>]*\bsrc\s*=\s*["']https://[^"']+["'][^>]*>`)
+	moduleScriptRe    = regexp.MustCompile(`(?i)\btype\s*=\s*["']?module\b`)
 	// JS 整页导航：location.href / assign / replace 的根相对路径
 	locationRe = regexp.MustCompile(`(?i)(\blocation\.(?:href\s*=|assign\s*\(|replace\s*\()\s*)(["'])(/[^"'\s)]*)(["'])`)
 	// HTML <head> 与 <base>：用于注入/改写 <base href>，欺骗前端路由器基址
@@ -98,6 +109,17 @@ func (rw *Rewriter) rewriteHTML(b []byte) []byte {
 	}
 	s = styleAttrDRe.ReplaceAllStringFunc(s, rewriteStyleAttr(styleAttrDRe))
 	s = styleAttrSRe.ReplaceAllStringFunc(s, rewriteStyleAttr(styleAttrSRe))
+
+	// 4.4) 外站 script 去 crossorigin/integrity：让经典跨域脚本按浏览器默认策略加载，
+	//      避免 CDN 的 ACAO 白名单把网关 origin 拒掉（DeepSeek 实测：200 但白屏）。
+	//      type=module 强制 CORS，去掉 crossorigin 也没用，原样放行。
+	s = externalScriptRe.ReplaceAllStringFunc(s, func(m string) string {
+		if moduleScriptRe.MatchString(m) {
+			return m
+		}
+		m = crossOriginAttrRe.ReplaceAllString(m, "")
+		return integrityAttrRe.ReplaceAllString(m, "")
+	})
 
 	// 4.5) 内联 <script> 块（无 src 的），重写其中的根相对 API/资源路径
 	s = scriptBlockRe.ReplaceAllStringFunc(s, func(m string) string {

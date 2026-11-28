@@ -5,6 +5,7 @@ import (
 	"compress/gzip"
 	"io"
 	"net/http"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -504,5 +505,47 @@ func TestRewriteUnquotedAttrs(t *testing.T) {
 	out2 := string(rw.rewriteHTML([]byte(keep)))
 	if !contains(out2, `src=//cdn.example.com/x.js`) || !contains(out2, `src=logo.png`) {
 		t.Errorf("外站与相对路径不应被改写:\n%s", out2)
+	}
+}
+
+// TestStripCrossOriginOnExternalScript 外站 script 带 crossorigin + integrity 时，
+// 从网关 origin 加载会被 CDN 的 ACAO 白名单拒绝（DeepSeek 实测 200 但白屏）。
+// 去掉这两个属性后按经典跨域脚本加载，页面才能真的渲染。
+func TestStripCrossOriginOnExternalScript(t *testing.T) {
+	rw := New("dps", "", "chat.deepseek.com")
+	in := `<html><head>` +
+		`<script crossorigin defer integrity="sha384-abc" src="https://fe-static.deepseek.com/chat/static/main.js"></script>` +
+		`<script src="https://cdn.example.com/x.js" integrity='sha384-def' crossorigin="anonymous"></script>` +
+		`<script src="/local.js" crossorigin integrity="sha384-keep"></script>` +
+		`<script type="module" crossorigin src="https://cdn.example.com/mod.js"></script>` +
+		`</head></html>`
+	out := string(rw.rewriteHTML([]byte(in)))
+
+	// 逐个 script 标签核对：外站经典脚本必须清掉两个属性
+	tagRe := regexp.MustCompile(`(?is)<script\b[^>]*>`)
+	tags := tagRe.FindAllString(out, -1)
+	get := func(substr string) string {
+		for _, tag := range tags {
+			if strings.Contains(tag, substr) {
+				return tag
+			}
+		}
+		return ""
+	}
+	for _, host := range []string{"fe-static.deepseek.com/chat/static/main.js", "cdn.example.com/x.js"} {
+		tag := get(host)
+		if tag == "" {
+			t.Fatalf("找不到外站脚本 %q", host)
+		}
+		if strings.Contains(strings.ToLower(tag), "crossorigin") || strings.Contains(strings.ToLower(tag), "integrity") {
+			t.Errorf("外站脚本仍带 crossorigin/integrity: %s", tag)
+		}
+	}
+	// 本站脚本、module 脚本不动
+	if local := get("./local.js"); !strings.Contains(local, `crossorigin integrity="sha384-keep"`) {
+		t.Errorf("本站脚本属性不应被改动: %s", local)
+	}
+	if mod := get("cdn.example.com/mod.js"); !strings.Contains(mod, "crossorigin") {
+		t.Errorf("module 脚本的 crossorigin 应保留: %s", mod)
 	}
 }
