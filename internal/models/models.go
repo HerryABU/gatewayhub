@@ -31,9 +31,14 @@ type Route struct {
 	// SDKOriginAuth 第三方登录 SDK（微信/Apple 等）的回调走原站域名：
 	// shim 把 redirect_uri 从网关 origin 换成后端原站 origin，让开放平台的
 	// 域名白名单校验通过（网关域名通常不在登记名单里）。登录流程在原站完成。
-	SDKOriginAuth bool      `gorm:"default:false" json:"sdk_origin_auth"`
-	CreatedAt     time.Time `json:"created_at"`
-	UpdatedAt     time.Time `json:"updated_at"`
+	SDKOriginAuth bool `gorm:"default:false" json:"sdk_origin_auth"`
+	// SpoofHostname 分层欺骗：让前端环境判定以为跑在官方域名上（按 hostname 选配置）。
+	SpoofHostname bool `gorm:"default:false" json:"spoof_hostname"`
+	// WXAppid 非空时，shim 在 WxLogin 初始化时把 appid 换成该值（官方 appid），
+	// 配合 SDKOriginAuth 让微信登录在反代域名下正常工作。
+	WXAppid   string    `gorm:"size:64;default:''" json:"wx_appid"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
 }
 
 // AccessLog 访问日志表

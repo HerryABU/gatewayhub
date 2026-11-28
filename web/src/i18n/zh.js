@@ -114,6 +114,7 @@ export default {
     intervalHint: '每个站点独立探测间隔（5-86400 秒，默认 30）',
     tlsSkipHint: '宝塔面板 / WSL 内网服务常用自签名证书，开启后才不会 502；仅影响网关到后端的连接，不影响浏览器访问网关。',
     sdkOriginHint: '第三方登录（微信/Apple）的回调改走原站域名，让开放平台域名白名单通过；登录流程在原站完成。',
+    wxAppidHint: '微信登录初始化时替换为此 AppID（从原站获取）；留空则不替换。',
   },
   stats: {
     totalPV: '总 PV',

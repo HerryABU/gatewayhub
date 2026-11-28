@@ -37,9 +37,34 @@ import (
 const prefixShimTemplate = `(function(){
   var P=__P__;
   var O_AUTH=__O__;
+  var WX_APPID=__A__;
   if(!P||P==="/")return;
   var PS=P+"/";
   window.__GATEWAY_PREFIX__=P;
+  // 分层欺骗 + SDK 透传：wxLogin.js 从原 CDN 正常加载（透传），只在它把
+  // window.WxLogin 赋值时拦截并包装构造参数 —— 把 appid 换成官方值、回调
+  // 交给 fixOAuth 处理。DeepSeek 实测：反代地址是 IP，前端判为 dev 环境用
+  // 测试 appid(wx58…) → 微信拒；换成官方 appid(wx932…) 后二维码正常。
+  // 预设 setter：shim 在 <head> 最先执行，此时 SDK 尚未加载。
+  if(WX_APPID){
+    try{
+      var _wx;
+      Object.defineProperty(window,"WxLogin",{configurable:true,
+        get:function(){return _wx},
+        set:function(fn){
+          if(typeof fn!=="function"){_wx=fn;return}
+          _wx=function(opts){
+            try{
+              if(opts&&typeof opts==="object"){
+                opts.appid=WX_APPID;
+                if(typeof opts.redirect_uri==="string")opts.redirect_uri=fixOAuth(opts.redirect_uri);
+              }
+            }catch(e){}
+            return fn.apply(this,arguments);
+          };
+        }});
+    }catch(e){}
+  }
   // 修 OAuth 回调地址：第三方登录 SDK（微信 wxLogin 等）把本站回调 URL
   // 嵌在「第三方域名 URL」的 redirect_uri 查询参数里。前端常用
   // location.origin + "/api/oauth/callback" 拼出 http://gw/api/...，
@@ -184,6 +209,14 @@ func (rw *Rewriter) prefixShim() string {
 		}
 	}
 	js = strings.Replace(js, "__O__", string(originJSON), 1)
+	// __A__ 是微信登录欺骗用的官方 appid；空则注入 null（不 hook WxLogin）。
+	appidJSON := []byte("null")
+	if rw.wxAppid != "" {
+		if encA, err := json.Marshal(rw.wxAppid); err == nil {
+			appidJSON = encA
+		}
+	}
+	js = strings.Replace(js, "__A__", string(appidJSON), 1)
 	return "<script data-gateway-prefix-shim=\"1\">" + js + "</script>"
 }
 

@@ -114,6 +114,7 @@ export default {
     intervalHint: 'Per-site probe interval (5-86400s, default 30)',
     tlsSkipHint: 'Enable for self-signed backends (Baota panel / WSL intranet) to avoid 502. Affects only gateway-to-backend TLS, not browser-to-gateway.',
     sdkOriginHint: 'Route OAuth callbacks (WeChat/Apple) back to the origin domain so provider domain whitelists pass; login completes on the original site.',
+    wxAppidHint: 'Replace WeChat appid with this value at SDK init (get it from origin site); empty = no replacement.',
   },
   stats: {
     totalPV: 'Total PV',

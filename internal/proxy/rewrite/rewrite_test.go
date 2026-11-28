@@ -607,3 +607,25 @@ func TestModifyKeepsSDKOrigin(t *testing.T) {
 		t.Errorf("Modify 重建 Rewriter 后丢失 origin（回源开关失效）:\n%s", string(out)[:min(400, len(out))])
 	}
 }
+
+// TestShimWXAppidHook 分层欺骗 + SDK 透传：shim 预设 WxLogin setter，
+// 在 SDK 初始化时替换 appid 与 redirect_uri（SDK 本身仍从原 CDN 正常加载）。
+func TestShimWXAppidHook(t *testing.T) {
+	plain := New("dps", "", "chat.deepseek.com").prefixShim()
+	if !strings.Contains(plain, "var WX_APPID=null") {
+		t.Error("未配置 appid 时应注入 null（hook 代码存在但 if 不成立，不执行）")
+	}
+	rw := NewWithOrigin("dps", "", "chat.deepseek.com", "https://chat.deepseek.com")
+	rw.SetWXAppid("wx932d4fdaf46d5611")
+	shim := rw.prefixShim()
+	for _, snippet := range []string{
+		`var WX_APPID="wx932d4fdaf46d5611"`,
+		`Object.defineProperty(window,"WxLogin"`,
+		`opts.appid=WX_APPID`,
+		`opts.redirect_uri=fixOAuth(opts.redirect_uri)`,
+	} {
+		if !strings.Contains(shim, snippet) {
+			t.Errorf("shim 缺少 WxLogin hook 片段 %q", snippet)
+		}
+	}
+}

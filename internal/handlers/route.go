@@ -32,6 +32,7 @@ type routeReq struct {
 	DropForeign   bool   `json:"drop_foreign_cookies"`
 	TLSSkipVerify bool   `json:"tls_insecure_skip_verify"`
 	SDKOriginAuth bool   `json:"sdk_origin_auth"`
+	WXAppid       string `json:"wx_appid"`
 }
 
 // validatePrefix 校验转发名（支持多级前缀，如 "v2/beta"，每段以小写字母开头）
@@ -102,6 +103,7 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		DropForeign   bool   `json:"drop_foreign_cookies"`
 		TLSSkipVerify bool   `json:"tls_insecure_skip_verify"`
 		SDKOriginAuth bool   `json:"sdk_origin_auth"`
+		WXAppid       string `json:"wx_appid"`
 	}
 	if err := c.ShouldBindJSON(&req); err != nil {
 		h.fail(c, 1001, "参数校验失败")
@@ -165,6 +167,7 @@ func (h *Handler) CreateRoute(c *gin.Context) {
 		DropForeign:   req.DropForeign,
 		TLSSkipVerify: req.TLSSkipVerify,
 		SDKOriginAuth: req.SDKOriginAuth,
+		WXAppid:       strings.TrimSpace(req.WXAppid),
 	}
 	if err := h.DB.Create(&route).Error; err != nil {
 		h.fail(c, 2001, "创建失败")
@@ -235,6 +238,7 @@ func (h *Handler) UpdateRoute(c *gin.Context) {
 	route.DropForeign = req.DropForeign
 	route.TLSSkipVerify = req.TLSSkipVerify
 	route.SDKOriginAuth = req.SDKOriginAuth
+	route.WXAppid = strings.TrimSpace(req.WXAppid)
 	if err := h.DB.Save(&route).Error; err != nil {
 		h.fail(c, 2001, "更新失败")
 		return
